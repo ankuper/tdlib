@@ -1,0 +1,107 @@
+# === TYPE3-PROXY BEGIN ===
+# Dockerfile.tdlib — Multi-stage TDLib build with Type3 (Teleproto3) support.
+#
+# Story 10-5: GitHub CI — TDLib Build + Release Artifacts
+# Image: ghcr.io/ankuper/tdlib-type3
+# Branch: teleproto3-support (ankuper/tdlib)
+# Platform: linux/amd64 only
+#
+# Build strategy:
+#   Stage 1 (builder): Ubuntu 24.04 + CMake + g++ + deps → build TDLib + libteleproto3
+#   Stage 2 (runtime): Ubuntu 24.04 minimal → shared libs + headers only
+#
+# libteleproto3 acquisition: Option B (build from source) — no release artifacts
+# exist for ankuper/teleproto3 yet. The source repo is cloned at build time.
+#
+# Drop-in replacement for dikidi-tdlib:latest:
+#   /usr/local/lib/libtdjson.so*       — shared library for go-tdlib CGO
+#   /usr/local/include/td/             — TDLib headers
+#   /usr/local/lib/libteleproto3.a     — Type3 static library
+#   /usr/local/include/t3.h            — Type3 header
+# === TYPE3-PROXY END ===
+
+# ─── Build stage ──────────────────────────────────────────────────────────────
+FROM ubuntu:24.04 AS builder
+
+# Build-time arg: teleproto3 git ref to build from source (Option B)
+ARG TELEPROTO3_REF=main
+
+# Avoid interactive prompts during apt-get
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install TDLib build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    g++ \
+    make \
+    git \
+    zlib1g-dev \
+    libssl-dev \
+    gperf \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# === TYPE3-PROXY BEGIN ===
+# Build libteleproto3 from source (Option B — no GitHub release artifacts available)
+# Clones ankuper/teleproto3 at TELEPROTO3_REF, builds lib, installs to /usr/local
+RUN git clone --depth 1 --branch "${TELEPROTO3_REF}" \
+        https://github.com/ankuper/teleproto3.git /teleproto3 \
+    && mkdir -p /teleproto3/lib/build \
+    && cmake -S /teleproto3/lib -B /teleproto3/lib/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build /teleproto3/lib/build -j"$(nproc)" \
+    && cmake --install /teleproto3/lib/build \
+    && cp /teleproto3/lib/include/t3.h /usr/local/include/t3.h \
+    && rm -rf /teleproto3
+# === TYPE3-PROXY END ===
+
+# Copy TDLib source (the entire teleproto3-support branch including 10-1..10-4 changes)
+COPY . /td
+
+# Configure TDLib with CMake
+# Pass TELEPROTO3 paths so CMakeLists.txt find_library() can locate libteleproto3.a
+# Pass T3_STATIC_LIB to suppress Windows DLL decoration on all platforms (safe no-op on Linux)
+RUN mkdir -p /td/build && cmake -S /td -B /td/build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DTELEPROTO3_LIB_DIR=/usr/local/lib \
+    -DTELEPROTO3_INCLUDE_DIR=/usr/local/include \
+    -DT3_STATIC_LIB=ON
+
+# Build and install TDLib
+RUN cmake --build /td/build --target install -j"$(nproc)"
+
+# ─── Runtime stage ─────────────────────────────────────────────────────────────
+# Do NOT use Alpine — TDLib links against glibc, not musl.
+FROM ubuntu:24.04
+
+# Avoid interactive prompts during apt-get
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    zlib1g \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy compiled libraries from builder stage
+COPY --from=builder /usr/local/lib/ /usr/local/lib/
+
+# Copy TDLib headers from builder stage
+COPY --from=builder /usr/local/include/td/ /usr/local/include/td/
+
+# === TYPE3-PROXY BEGIN ===
+# Copy libteleproto3.a and t3.h to standard paths for consumer linkage
+COPY --from=builder /usr/local/lib/libteleproto3.a /usr/local/lib/libteleproto3.a
+COPY --from=builder /usr/local/include/t3.h /usr/local/include/t3.h
+
+# Register library path so go-tdlib CGO can find libtdjson.so at runtime.
+# LD_LIBRARY_PATH alone is NOT sufficient for CGO — ldconfig is required.
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/tdlib.conf && ldconfig
+# === TYPE3-PROXY END ===
+
+# OCI labels per ankuper project convention (Story 4-2 pattern)
+LABEL org.opencontainers.image.source="https://github.com/ankuper/tdlib" \
+      org.opencontainers.image.description="TDLib with Type3 (Teleproto3) proxy support. Drop-in replacement for dikidi-tdlib:latest. Branch: teleproto3-support."
