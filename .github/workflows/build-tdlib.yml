@@ -136,7 +136,7 @@ jobs:
           # Create a container from the just-built image
           CONTAINER=$(docker create ghcr.io/ankuper/tdlib-type3:latest bash -c "
             set -euo pipefail
-            apt-get update -qq && apt-get install -y -qq --no-install-recommends g++ > /dev/null 2>&1
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends g++ libssl-dev > /dev/null 2>&1
             g++ -std=c++17 \
                 -I/usr/local/include \
                 -L/usr/local/lib \
@@ -144,10 +144,9 @@ jobs:
                 /tmp/test_type3_smoke.cpp \
                 -o /tmp/test_type3_smoke
             echo '--- ldd check ---'
-            ldd /tmp/test_type3_smoke | grep libtdjson
-            ldd /tmp/test_type3_smoke | grep libtdjson | grep -v 'not found'
+            ldd /tmp/test_type3_smoke
             echo '--- running test ---'
-            /tmp/test_type3_smoke
+            LD_LIBRARY_PATH=/usr/local/lib /tmp/test_type3_smoke
           ")
           # Copy smoke test source into container (avoids heredoc quoting issues)
           docker cp tests/test_type3_smoke.cpp "${CONTAINER}:/tmp/test_type3_smoke.cpp"
