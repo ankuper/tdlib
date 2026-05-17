@@ -1323,6 +1323,27 @@ endif()
 if (NOT CMAKE_CROSSCOMPILING)
   add_dependencies(tdmtproto tl_generate_mtproto)
 endif()
+# === TYPE3-PROXY BEGIN ===
+# libteleproto3 linkage for Type3WebSocketTransport.
+# Pass -DTELEPROTO3_LIB_DIR=<path> and -DTELEPROTO3_INCLUDE_DIR=<path> at configure time.
+# T3_STATIC_LIB suppresses Windows DLL decoration on all platforms (safe no-op on Linux/macOS).
+if (TELEPROTO3_LIB_DIR)
+  find_library(TELEPROTO3_LIB
+    NAMES teleproto3
+    PATHS "${TELEPROTO3_LIB_DIR}"
+    NO_DEFAULT_PATH
+    REQUIRED
+  )
+  if (TELEPROTO3_INCLUDE_DIR)
+    target_include_directories(tdmtproto SYSTEM PRIVATE "${TELEPROTO3_INCLUDE_DIR}")
+  endif()
+  target_link_libraries(tdmtproto PRIVATE "${TELEPROTO3_LIB}")
+  target_compile_definitions(tdmtproto PRIVATE T3_STATIC_LIB)
+  message(STATUS "TYPE3-PROXY: linking libteleproto3 from ${TELEPROTO3_LIB}")
+else()
+  message(STATUS "TYPE3-PROXY: TELEPROTO3_LIB_DIR not set — Type3WebSocketTransport will link without libteleproto3")
+endif()
+# === TYPE3-PROXY END ===
 
 # tdcore - internal TDLib interface
 if (MSVC AND TD_ENABLE_LTO)
