@@ -72,6 +72,18 @@ class Proxy {
     return proxy;
   }
 
+  // === TYPE3-PROXY BEGIN ===
+  static Proxy teleproto3(string server, int32 port, mtproto::ProxySecret secret, string endpoint) {
+    Proxy proxy;
+    proxy.type_ = Type::Teleproto3;
+    proxy.server_ = std::move(server);
+    proxy.port_ = port;
+    proxy.secret_ = std::move(secret);
+    proxy.endpoint_ = std::move(endpoint);
+    return proxy;
+  }
+  // === TYPE3-PROXY END ===
+
   CSlice server() const {
     return server_;
   }
@@ -92,7 +104,15 @@ class Proxy {
     return secret_;
   }
 
-  enum class Type : int32 { None, Socks5, Mtproto, HttpTcp, HttpCaching };
+  // === TYPE3-PROXY BEGIN ===
+  CSlice endpoint() const {
+    return endpoint_;
+  }
+  // === TYPE3-PROXY END ===
+
+  // === TYPE3-PROXY BEGIN ===
+  enum class Type : int32 { None, Socks5, Mtproto, HttpTcp, HttpCaching, Teleproto3 };
+  // === TYPE3-PROXY END ===
   Type type() const {
     return type_;
   }
@@ -112,6 +132,11 @@ class Proxy {
   bool use_http_caching_proxy() const {
     return type() == Proxy::Type::HttpCaching;
   }
+  // === TYPE3-PROXY BEGIN ===
+  bool use_teleproto3_proxy() const {
+    return type() == Proxy::Type::Teleproto3;
+  }
+  // === TYPE3-PROXY END ===
 
   td_api::object_ptr<td_api::proxy> get_proxy_object() const;
 
@@ -128,6 +153,13 @@ class Proxy {
       store(server_, storer);
       store(port_, storer);
       store(secret_.get_encoded_secret(), storer);
+    // === TYPE3-PROXY BEGIN ===
+    } else if (type_ == Proxy::Type::Teleproto3) {
+      store(server_, storer);
+      store(port_, storer);
+      store(secret_.get_encoded_secret(), storer);
+      store(endpoint_, storer);
+    // === TYPE3-PROXY END ===
     } else {
       CHECK(type_ == Proxy::Type::None);
     }
@@ -146,6 +178,13 @@ class Proxy {
       parse(server_, parser);
       parse(port_, parser);
       secret_ = mtproto::ProxySecret::from_link(parser.template fetch_string<Slice>(), true).move_as_ok();
+    // === TYPE3-PROXY BEGIN ===
+    } else if (type_ == Proxy::Type::Teleproto3) {
+      parse(server_, parser);
+      parse(port_, parser);
+      secret_ = mtproto::ProxySecret::from_link(parser.template fetch_string<Slice>(), true).move_as_ok();
+      parse(endpoint_, parser);
+    // === TYPE3-PROXY END ===
     } else {
       CHECK(type_ == Proxy::Type::None);
     }
@@ -158,14 +197,20 @@ class Proxy {
   string user_;
   string password_;
   mtproto::ProxySecret secret_;
+  // === TYPE3-PROXY BEGIN ===
+  string endpoint_;
+  // === TYPE3-PROXY END ===
 
   static Result<Proxy> create_proxy(string server, int port, const td_api::ProxyType *proxy_type);
 };
 
+// === TYPE3-PROXY BEGIN ===
 inline bool operator==(const Proxy &lhs, const Proxy &rhs) {
   return lhs.type() == rhs.type() && lhs.server() == rhs.server() && lhs.port() == rhs.port() &&
-         lhs.user() == rhs.user() && lhs.password() == rhs.password() && lhs.secret() == rhs.secret();
+         lhs.user() == rhs.user() && lhs.password() == rhs.password() && lhs.secret() == rhs.secret() &&
+         lhs.endpoint() == rhs.endpoint();
 }
+// === TYPE3-PROXY END ===
 
 inline bool operator!=(const Proxy &lhs, const Proxy &rhs) {
   return !(lhs == rhs);

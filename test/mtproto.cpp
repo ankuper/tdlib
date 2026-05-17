@@ -22,6 +22,11 @@
 #include "td/mtproto/TlsInit.h"
 #include "td/mtproto/TransportType.h"
 
+// === TYPE3-PROXY BEGIN ===
+#include "td/telegram/logevent/LogEvent.h"
+#include "td/telegram/net/Proxy.h"
+// === TYPE3-PROXY END ===
+
 #include "td/net/GetHostByNameActor.h"
 #include "td/net/Socks5.h"
 #include "td/net/TransparentProxy.h"
@@ -491,6 +496,72 @@ TEST(Mtproto, socks5) {
   }
   sched.finish();
 }
+
+// === TYPE3-PROXY BEGIN ===
+TEST(Mtproto, teleproto3_proxy) {
+  using namespace td;
+  using namespace td::mtproto;
+
+  // AC #1: factory creates proxy with correct type, server, port, secret, endpoint
+  auto secret_str = string("ff1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12example.com");
+  auto r_secret = ProxySecret::from_link(secret_str);
+  ASSERT_TRUE(r_secret.is_ok());
+  auto secret = r_secret.move_as_ok();
+
+  string server = "proxy.example.com";
+  int32 port = 443;
+  string endpoint = "wss://arctic-breeze.my.id:443/ws/7f34ba";
+
+  auto proxy = Proxy::teleproto3(server, port, secret, endpoint);
+
+  // AC #1: correct type
+  ASSERT_EQ(static_cast<int32>(Proxy::Type::Teleproto3), static_cast<int32>(proxy.type()));
+  ASSERT_EQ(server, proxy.server());
+  ASSERT_EQ(port, proxy.port());
+  ASSERT_EQ(endpoint, proxy.endpoint());
+
+  // AC #2: use_teleproto3_proxy() returns true; other use_* return false
+  ASSERT_TRUE(proxy.use_teleproto3_proxy());
+  ASSERT_TRUE(proxy.use_proxy());
+  ASSERT_FALSE(proxy.use_mtproto_proxy());
+  ASSERT_FALSE(proxy.use_socks5_proxy());
+  ASSERT_FALSE(proxy.use_http_tcp_proxy());
+  ASSERT_FALSE(proxy.use_http_caching_proxy());
+
+  // AC #3: endpoint() returns the stored URL
+  ASSERT_EQ(CSlice(endpoint), proxy.endpoint());
+
+  // AC #4: serialization round-trip — all fields preserved
+  {
+    BufferSlice serialized = log_event_store(proxy);
+    Proxy parsed_proxy;
+    log_event_parse(parsed_proxy, serialized.as_slice()).ensure();
+    ASSERT_EQ(static_cast<int32>(Proxy::Type::Teleproto3), static_cast<int32>(parsed_proxy.type()));
+    ASSERT_EQ(proxy.server(), parsed_proxy.server());
+    ASSERT_EQ(proxy.port(), parsed_proxy.port());
+    ASSERT_EQ(proxy.endpoint(), parsed_proxy.endpoint());
+    ASSERT_EQ(proxy.secret().get_encoded_secret(), parsed_proxy.secret().get_encoded_secret());
+  }
+
+  // AC #5: operator== distinguishes by endpoint
+  auto proxy2 = Proxy::teleproto3(server, port, secret, "wss://other.example.com/ws");
+  ASSERT_TRUE(proxy != proxy2);
+
+  // AC #5: identical proxies are equal
+  auto proxy3 = Proxy::teleproto3(server, port, secret, endpoint);
+  ASSERT_TRUE(proxy == proxy3);
+
+  // AC #6: operator<< produces expected debug format
+  {
+    StringBuilder sb;
+    sb << proxy;
+    auto str = sb.as_cslice().str();
+    ASSERT_TRUE(str.find("ProxyTeleproto3") != string::npos);
+    ASSERT_TRUE(str.find(server) != string::npos);
+    ASSERT_TRUE(str.find(endpoint) != string::npos);
+  }
+}
+// === TYPE3-PROXY END ===
 
 TEST(Mtproto, notifications) {
   td::vector<td::string> pushes = {

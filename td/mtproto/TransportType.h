@@ -14,7 +14,9 @@ namespace td {
 namespace mtproto {
 
 struct TransportType {
-  enum Type { Tcp, ObfuscatedTcp, Http } type = Tcp;
+  // === TYPE3-PROXY BEGIN ===
+  enum Type { Tcp, ObfuscatedTcp, Http, WebSocketType3 } type = Tcp;
+  // === TYPE3-PROXY END ===
   int16 dc_id{0};
   ProxySecret secret;
 

@@ -9455,6 +9455,10 @@ proxyTypeHttp username:string password:string http_only:Bool = ProxyType;
 //@description An MTProto proxy server @secret The proxy's secret in hexadecimal encoding
 proxyTypeMtproto secret:string = ProxyType;
 
+// === TYPE3-PROXY BEGIN ===
+//@description A Teleproto3 proxy server @secret The proxy's Type3 secret in hexadecimal encoding (ff-prefixed, encodes host and path per spec/secret-format.md) @endpoint WebSocket endpoint URL (e.g. wss://host:443/path)
+proxyTypeTeleproto3 secret:string endpoint:string = ProxyType;
+// === TYPE3-PROXY END ===
 
 //@description Contains information about a proxy server added to the list of proxies
 //@id Unique identifier of the proxy
