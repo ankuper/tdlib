@@ -29,7 +29,6 @@ void Type3WebSocketTransport::init(ChainBufferReader *input, ChainBufferWriter *
   input_ = input;
   output_ = output;
   send_init_sequence();
-  initialized_ = true;
 }
 
 void Type3WebSocketTransport::send_init_sequence() {
@@ -83,6 +82,12 @@ void Type3WebSocketTransport::send_init_sequence() {
 
   // ---- Derive keys ----
   Slice proxy_secret = secret_.get_proxy_secret();  // 16-byte AES secret
+  // P8/D1: inline secret validation — must be at least 16 bytes for AES-256-CTR KDF
+  if (proxy_secret.size() < 16) {
+    LOG(ERROR) << "Type3WebSocket: proxy secret too short (" << proxy_secret.size() << " bytes, need >= 16)";
+    ws_closed_ = true;
+    return;
+  }
 
   // read_key = SHA256(header[8..40] || proxy_secret[0..16])
   UInt256 read_key;
@@ -213,23 +218,33 @@ Result<size_t> Type3WebSocketTransport::read_next(BufferSlice *message, uint32 *
     pkt_reassembly_buf_.append(frame_payload.as_slice().data(), frame_payload.size());
 
     // Try to extract one intermediate-format packet (4-byte LE length + payload)
-    if (pkt_reassembly_buf_.size() < 4) {
+    size_t avail = pkt_reassembly_buf_.size() - pkt_reassembly_offset_;
+    if (avail < 4) {
       continue;
     }
 
-    uint32 pkt_len = as<uint32>(pkt_reassembly_buf_.data());
-    // Sanity: intermediate-format packets are ≤4MB
+    uint32 pkt_len = as<uint32>(pkt_reassembly_buf_.data() + pkt_reassembly_offset_);
+    // Sanity: intermediate-format packets are ≤4MB and ≥8 bytes
     if (pkt_len > (1u << 22) + 1024) {
       return Status::Error("Type3WebSocket: oversized MTProto packet length");
     }
+    if (pkt_len < 8) {
+      return Status::Error("Type3WebSocket: undersized MTProto packet length");
+    }
 
-    if (pkt_reassembly_buf_.size() < 4 + pkt_len) {
+    if (avail < 4 + pkt_len) {
       continue;  // need more WS frames
     }
 
     // Emit the packet (without the 4-byte length prefix)
-    *message = BufferSlice(Slice(pkt_reassembly_buf_.data() + 4, pkt_len));
-    pkt_reassembly_buf_.erase(0, 4 + pkt_len);
+    *message = BufferSlice(Slice(pkt_reassembly_buf_.data() + pkt_reassembly_offset_ + 4, pkt_len));
+    pkt_reassembly_offset_ += 4 + pkt_len;
+
+    // Compact buffer when offset exceeds half the total size to bound memory
+    if (pkt_reassembly_offset_ > pkt_reassembly_buf_.size() / 2) {
+      pkt_reassembly_buf_.erase(0, pkt_reassembly_offset_);
+      pkt_reassembly_offset_ = 0;
+    }
     return 0;
   }
 
@@ -288,6 +303,12 @@ Result<BufferSlice> Type3WebSocketTransport::read_ws_frame() {
     }
   }
 
+  // P6: cap incoming WS frame size to prevent OOM from malicious/buggy server
+  constexpr uint64 MAX_WS_FRAME_SIZE = 1u << 24;  // 16 MiB
+  if (payload_len > MAX_WS_FRAME_SIZE) {
+    return Status::Error("Type3WebSocket: WS frame exceeds 16 MiB limit");
+  }
+
   if (available < header_len + payload_len) {
     return BufferSlice();  // incomplete frame
   }
@@ -314,15 +335,7 @@ Result<BufferSlice> Type3WebSocketTransport::read_ws_frame() {
     return BufferSlice();
   }
   if (opcode == 0x9) {
-    // Ping → send Pong (opcode 0xA), payload echoed, unmasked server→client is fine but
-    // since we're client we send masked pong
-    append_ws_frame(payload.as_slice());  // re-use append_ws_frame (sends as binary 0x82)
-    // Actually send as pong 0x8A:
-    // append_ws_frame uses 0x82; for pong we need 0x8A.
-    // Simpler: just drop ping — server will eventually close if we don't respond.
-    // Per spec §5.5.3 we SHOULD respond. Fix: write pong directly.
-    // Overwrite the last frame's opcode byte in output — not easy post-append.
-    // Pragmatic: send a separate pong frame manually.
+    // Ping → send Pong (opcode 0xA) with echoed payload, masked (client→server)
     string pong_hdr;
     pong_hdr += '\x8A';  // FIN + pong opcode
     size_t plen = payload.size();
