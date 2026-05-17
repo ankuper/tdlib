@@ -19,6 +19,9 @@
 #include "td/mtproto/TransportType.h"
 
 #include "td/net/NetStats.h"
+// === TYPE3-PROXY BEGIN ===
+#include "td/net/WebSocketType3Proxy.h"
+// === TYPE3-PROXY END ===
 
 #include "td/actor/actor.h"
 #include "td/actor/SignalSlot.h"
