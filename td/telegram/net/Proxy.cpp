@@ -8,6 +8,9 @@
 
 #include "td/telegram/td_api.h"
 
+// === TYPE3-PROXY BEGIN ===
+#include "td/utils/logging.h"
+// === TYPE3-PROXY END ===
 #include "td/utils/utf8.h"
 
 namespace td {
@@ -56,8 +59,15 @@ Result<Proxy> Proxy::create_proxy(string server, int port, const td_api::ProxyTy
       if (type->endpoint_.empty()) {
         return Status::Error(400, "Teleproto3 proxy endpoint must be non-empty");
       }
+      if (type->endpoint_.size() > 2048) {
+        return Status::Error(400, "Teleproto3 proxy endpoint URL is too long");
+      }
       if (type->endpoint_.substr(0, 6) != "wss://" && type->endpoint_.substr(0, 5) != "ws://") {
         return Status::Error(400, "Teleproto3 proxy endpoint must use wss:// or ws:// scheme");
+      }
+      if (type->endpoint_.substr(0, 5) == "ws://") {
+        LOG(WARNING) << "Teleproto3 proxy endpoint uses unencrypted ws:// scheme — " 
+                     << "traffic will not be TLS-protected";
       }
       TRY_RESULT(secret, mtproto::ProxySecret::from_link(type->secret_));
       return Proxy::teleproto3(std::move(server), port, std::move(secret), type->endpoint_);
