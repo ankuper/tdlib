@@ -425,12 +425,13 @@ void ConnectionCreator::disable_proxy_impl() {
 }
 
 void ConnectionCreator::on_proxy_changed(bool from_db) {
-  send_closure(G()->state_manager(), &StateManager::on_proxy,
-               // === TYPE3-PROXY BEGIN ===
-               active_proxy_id_ != 0 && proxies_[active_proxy_id_].type() != Proxy::Type::Mtproto &&
-                   proxies_[active_proxy_id_].type() != Proxy::Type::Teleproto3 &&
-                   proxies_[active_proxy_id_].type() != Proxy::Type::HttpCaching);
-               // === TYPE3-PROXY END ===
+  // === TYPE3-PROXY BEGIN ===
+  bool has_connection_proxy = active_proxy_id_ != 0 &&
+      proxies_[active_proxy_id_].type() != Proxy::Type::Mtproto &&
+      proxies_[active_proxy_id_].type() != Proxy::Type::Teleproto3 &&
+      proxies_[active_proxy_id_].type() != Proxy::Type::HttpCaching;
+  // === TYPE3-PROXY END ===
+  send_closure(G()->state_manager(), &StateManager::on_proxy, has_connection_proxy);
 
   if (!from_db) {
     for (auto &child : children_) {
