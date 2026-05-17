@@ -25,6 +25,7 @@
 // === TYPE3-PROXY BEGIN ===
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/net/Proxy.h"
+#include "td/telegram/td_api.h"
 // === TYPE3-PROXY END ===
 
 #include "td/net/GetHostByNameActor.h"
@@ -560,6 +561,64 @@ TEST(Mtproto, teleproto3_proxy) {
     ASSERT_TRUE(str.find("ProxyTeleproto3") != string::npos);
     ASSERT_TRUE(str.find(server) != string::npos);
     ASSERT_TRUE(str.find(endpoint) != string::npos);
+  }
+}
+
+TEST(Mtproto, teleproto3_proxy_validation) {
+  using namespace td;
+
+  // Use an ee-prefixed secret that from_link() accepts (ee + 16B random + domain)
+  auto valid_secret = string("ee1234567890abcdef1234567890abcdef6578616d706c652e636f6d");
+  auto valid_endpoint = string("wss://arctic-breeze.my.id:443/ws/7f34ba");
+
+  // (a) empty secret → Error 400
+  {
+    auto proxy_type = td_api::make_object<td_api::proxyTypeTeleproto3>("", valid_endpoint);
+    auto proxy_obj = td_api::make_object<td_api::proxy>("proxy.example.com", 443, std::move(proxy_type));
+    auto result = Proxy::create_proxy(proxy_obj.get());
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(400, result.error().code());
+    ASSERT_TRUE(result.error().message().str().find("secret") != string::npos);
+  }
+
+  // (b) empty endpoint → Error 400
+  {
+    auto proxy_type = td_api::make_object<td_api::proxyTypeTeleproto3>(valid_secret, "");
+    auto proxy_obj = td_api::make_object<td_api::proxy>("proxy.example.com", 443, std::move(proxy_type));
+    auto result = Proxy::create_proxy(proxy_obj.get());
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(400, result.error().code());
+    ASSERT_TRUE(result.error().message().str().find("endpoint") != string::npos);
+  }
+
+  // (c) malformed endpoint scheme (http://) → Error 400
+  {
+    auto proxy_type = td_api::make_object<td_api::proxyTypeTeleproto3>(valid_secret, "http://example.com/ws");
+    auto proxy_obj = td_api::make_object<td_api::proxy>("proxy.example.com", 443, std::move(proxy_type));
+    auto result = Proxy::create_proxy(proxy_obj.get());
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(400, result.error().code());
+    ASSERT_TRUE(result.error().message().str().find("wss://") != string::npos);
+  }
+
+  // (d) endpoint too long (> 2048 bytes) → Error 400
+  {
+    auto long_endpoint = string("wss://") + string(2048, 'x');
+    auto proxy_type = td_api::make_object<td_api::proxyTypeTeleproto3>(valid_secret, long_endpoint);
+    auto proxy_obj = td_api::make_object<td_api::proxy>("proxy.example.com", 443, std::move(proxy_type));
+    auto result = Proxy::create_proxy(proxy_obj.get());
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(400, result.error().code());
+    ASSERT_TRUE(result.error().message().str().find("too long") != string::npos);
+  }
+
+  // (e) ws:// scheme is accepted (but will log a warning)
+  {
+    auto proxy_type = td_api::make_object<td_api::proxyTypeTeleproto3>(valid_secret, "ws://localhost:8080/ws");
+    auto proxy_obj = td_api::make_object<td_api::proxy>("proxy.example.com", 443, std::move(proxy_type));
+    auto result = Proxy::create_proxy(proxy_obj.get());
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_EQ(CSlice("ws://localhost:8080/ws"), result.ok().endpoint());
   }
 }
 // === TYPE3-PROXY END ===
