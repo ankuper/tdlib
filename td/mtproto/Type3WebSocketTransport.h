@@ -51,19 +51,16 @@ class Type3WebSocketTransport final : public IStreamTransport {
   ChainBufferWriter *output_{nullptr};
 
   bool ws_closed_{false};
-  bool initialized_{false};
 
   // AES-CTR state for the outgoing (write) direction
   AesCtrState output_aes_;
   // AES-CTR state for the incoming (read) direction
   AesCtrState input_aes_;
 
-  // Pending reassembly buffer for WS frames larger than one chunk
-  string ws_reassembly_buf_;
-  size_t ws_reassembly_needed_{0};  // 0 = no pending frame
 
-  // Intermediate-format packet reassembly
+  // Intermediate-format packet reassembly (with read offset to avoid O(n²) erase)
   string pkt_reassembly_buf_;
+  size_t pkt_reassembly_offset_{0};
 
   // Send the 4-byte Session Header and 64-byte random_header; derive AES-CTR keys.
   void send_init_sequence();
@@ -76,10 +73,7 @@ class Type3WebSocketTransport final : public IStreamTransport {
   // Returns error on protocol violation.
   Result<BufferSlice> read_ws_frame();
 
-  // Intermediate-format packet framing (4-byte LE length prefix + payload)
-  // Tries to extract one complete packet from buf.
-  // Returns 0 if more data needed, packet size if extracted into *message.
-  size_t try_read_packet(ChainBufferReader *buf, BufferSlice *message);
+
 };
 
 }  // namespace mtproto
