@@ -49,9 +49,8 @@ RUN git clone --depth 1 --branch "${TELEPROTO3_REF}" \
     && mkdir -p /teleproto3/lib/build \
     && cmake -S /teleproto3/lib -B /teleproto3/lib/build \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
     && cmake --build /teleproto3/lib/build -j"$(nproc)" \
-    && cmake --install /teleproto3/lib/build \
+    && cp /teleproto3/lib/build/libteleproto3.a /usr/local/lib/libteleproto3.a \
     && cp /teleproto3/lib/include/t3.h /usr/local/include/t3.h \
     && rm -rf /teleproto3
 # === TYPE3-PROXY END ===
