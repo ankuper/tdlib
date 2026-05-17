@@ -18,6 +18,10 @@ set(TD_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/tdclient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/tqueue.cpp
 
+  # === TYPE3-PROXY BEGIN ===
+  ${CMAKE_CURRENT_SOURCE_DIR}/type3_schema.cpp
+  # === TYPE3-PROXY END ===
+
   ${CMAKE_CURRENT_SOURCE_DIR}/data.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/data.h
 
