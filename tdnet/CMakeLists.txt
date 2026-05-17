@@ -31,6 +31,9 @@ set(TDNET_SOURCE
   td/net/TcpListener.cpp
   td/net/TransparentProxy.cpp
   td/net/Wget.cpp
+  # === TYPE3-PROXY BEGIN ===
+  td/net/WebSocketType3Proxy.cpp
+  # === TYPE3-PROXY END ===
 
   td/net/GetHostByNameActor.h
   td/net/HttpChunkedByteFlow.h
@@ -50,6 +53,9 @@ set(TDNET_SOURCE
   td/net/TcpListener.h
   td/net/TransparentProxy.h
   td/net/Wget.h
+  # === TYPE3-PROXY BEGIN ===
+  td/net/WebSocketType3Proxy.h
+  # === TYPE3-PROXY END ===
 )
 
 if (APPLE_WATCH)

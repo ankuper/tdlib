@@ -625,6 +625,11 @@ Result<mtproto::TransportType> ConnectionCreator::get_transport_type(const Proxy
   if (proxy.use_mtproto_proxy()) {
     return mtproto::TransportType{mtproto::TransportType::ObfuscatedTcp, raw_dc_id, proxy.secret()};
   }
+  // === TYPE3-PROXY BEGIN ===
+  if (proxy.use_teleproto3_proxy()) {
+    return mtproto::TransportType{mtproto::TransportType::WebSocketType3, raw_dc_id, proxy.secret()};
+  }
+  // === TYPE3-PROXY END ===
   if (proxy.use_http_caching_proxy()) {
     CHECK(info.option != nullptr);
     string proxy_authorization;
@@ -665,6 +670,16 @@ Result<SocketFd> ConnectionCreator::find_connection(const Proxy &proxy, const IP
     VLOG(connections) << "Create: " << extra.debug_str;
     return SocketFd::open(proxy_ip_address);
   }
+  // === TYPE3-PROXY BEGIN ===
+  if (proxy.use_teleproto3_proxy()) {
+    extra.mtproto_ip_address = info.option->get_ip_address();
+    extra.ip_address = proxy_ip_address;
+    extra.debug_str = PSTRING() << "Teleproto3 " << proxy.server() << ':' << proxy.port()
+                                << " --> " << extra.mtproto_ip_address << extra.debug_str;
+    VLOG(connections) << "Create: " << extra.debug_str;
+    return SocketFd::open(extra.ip_address);
+  }
+  // === TYPE3-PROXY END ===
 
   extra.check_mode |= info.should_check;
 
@@ -688,7 +703,10 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
                                                  unique_ptr<mtproto::RawConnection::StatsCallback> stats_callback,
                                                  ActorShared<> parent, bool use_connection_token,
                                                  Promise<ConnectionData> promise) {
-  if (proxy.use_socks5_proxy() || proxy.use_http_tcp_proxy() || transport_type.secret.emulate_tls()) {
+  // === TYPE3-PROXY BEGIN ===
+  if (proxy.use_socks5_proxy() || proxy.use_http_tcp_proxy() || transport_type.secret.emulate_tls() ||
+      proxy.use_teleproto3_proxy()) {
+  // === TYPE3-PROXY END ===
     VLOG(connections) << "Create new transparent proxy connection " << debug_str;
     class Callback final : public TransparentProxy::Callback {
      public:
@@ -736,8 +754,13 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
       bool was_connected_{false};
     };
     VLOG(connections) << "Start "
-                      << (proxy.use_socks5_proxy() ? "Socks5" : (proxy.use_http_tcp_proxy() ? "HTTP" : "TLS")) << ": "
-                      << debug_str;
+                      << (proxy.use_socks5_proxy()     ? "Socks5"
+                          : proxy.use_http_tcp_proxy() ? "HTTP"
+                          // === TYPE3-PROXY BEGIN ===
+                          : proxy.use_teleproto3_proxy() ? "Type3"
+                          // === TYPE3-PROXY END ===
+                                                        : "TLS")
+                      << ": " << debug_str;
     auto callback = make_unique<Callback>(std::move(promise), ip_address, std::move(stats_callback),
                                           use_connection_token, !proxy.use_socks5_proxy());
     if (proxy.use_socks5_proxy()) {
@@ -753,6 +776,12 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
           PSLICE() << actor_name_prefix << "TlsInit", std::move(socket_fd), transport_type.secret.get_domain(),
           transport_type.secret.get_proxy_secret().str(), std::move(callback), std::move(parent),
           G()->get_dns_time_difference()));
+    // === TYPE3-PROXY BEGIN ===
+    } else if (proxy.use_teleproto3_proxy()) {
+      return ActorOwn<>(create_actor<WebSocketType3Proxy>(
+          PSLICE() << actor_name_prefix << "Type3Proxy", std::move(socket_fd), mtproto_ip_address,
+          proxy.endpoint().str(), std::move(callback), std::move(parent)));
+    // === TYPE3-PROXY END ===
     } else {
       UNREACHABLE();
     }
