@@ -298,6 +298,9 @@ set(TD_MTPROTO_SOURCE
   td/mtproto/SessionConnection.cpp
   td/mtproto/TcpTransport.cpp
   td/mtproto/TlsInit.cpp
+  # === TYPE3-PROXY BEGIN ===
+  td/mtproto/Type3WebSocketTransport.cpp
+  # === TYPE3-PROXY END ===
   td/mtproto/TlsReaderByteFlow.cpp
   td/mtproto/Transport.cpp
   td/mtproto/utils.cpp
@@ -327,6 +330,9 @@ set(TD_MTPROTO_SOURCE
   td/mtproto/SessionConnection.h
   td/mtproto/TcpTransport.h
   td/mtproto/TlsInit.h
+  # === TYPE3-PROXY BEGIN ===
+  td/mtproto/Type3WebSocketTransport.h
+  # === TYPE3-PROXY END ===
   td/mtproto/TlsReaderByteFlow.h
   td/mtproto/Transport.h
   td/mtproto/TransportType.h

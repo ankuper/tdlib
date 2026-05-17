@@ -8,6 +8,9 @@
 
 #include "td/mtproto/HttpTransport.h"
 #include "td/mtproto/TcpTransport.h"
+// === TYPE3-PROXY BEGIN ===
+#include "td/mtproto/Type3WebSocketTransport.h"
+// === TYPE3-PROXY END ===
 
 namespace td {
 namespace mtproto {
@@ -20,6 +23,10 @@ unique_ptr<IStreamTransport> create_transport(TransportType type) {
       return td::make_unique<tcp::OldTransport>();
     case TransportType::Http:
       return td::make_unique<http::Transport>(type.secret.get_raw_secret().str());
+    // === TYPE3-PROXY BEGIN ===
+    case TransportType::WebSocketType3:
+      return td::make_unique<Type3WebSocketTransport>(type.dc_id, std::move(type.secret));
+    // === TYPE3-PROXY END ===
   }
   UNREACHABLE();
 }
