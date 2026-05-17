@@ -34,14 +34,8 @@ void WebSocketType3Proxy::parse_endpoint(const string &url, string *host, string
     *host = u.str();
     *path = "/";
   } else {
-    // Strip port from host if present for the Host header
-    Slice host_part = u.substr(0, slash_pos);
-    auto colon_pos = host_part.rfind(':');
-    if (colon_pos != Slice::npos) {
-      *host = host_part.substr(0, colon_pos).str();
-    } else {
-      *host = host_part.str();
-    }
+    // Keep full host:port for the Host header per RFC 7230 §5.4
+    *host = u.substr(0, slash_pos).str();
     *path = u.substr(slash_pos).str();
   }
 }
