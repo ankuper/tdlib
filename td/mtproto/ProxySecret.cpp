@@ -36,7 +36,12 @@ Result<ProxySecret> ProxySecret::from_binary(Slice raw_unchecked_secret, bool tr
   }
   if (raw_unchecked_secret.size() == 16 ||
       (raw_unchecked_secret.size() == 17 && static_cast<unsigned char>(raw_unchecked_secret[0]) == 0xdd) ||
-      (raw_unchecked_secret.size() >= 18 && static_cast<unsigned char>(raw_unchecked_secret[0]) == 0xee)) {
+      (raw_unchecked_secret.size() >= 18 && static_cast<unsigned char>(raw_unchecked_secret[0]) == 0xee) ||
+      // === TYPE3-PROXY BEGIN ===
+      // Type3 secret: 0xff + 16-byte AES key + UTF-8 domain (per spec/secret-format.md §1)
+      // get_proxy_secret() returns substr(1,16) for size>=17 — extracts the AES key correctly
+      (raw_unchecked_secret.size() >= 18 && static_cast<unsigned char>(raw_unchecked_secret[0]) == 0xff)) {
+      // === TYPE3-PROXY END ===
     return from_raw(raw_unchecked_secret);
   }
   if (raw_unchecked_secret.size() < 16) {
