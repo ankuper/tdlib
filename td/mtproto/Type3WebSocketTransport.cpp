@@ -199,15 +199,15 @@ void Type3WebSocketTransport::write(BufferWriter &&message, bool /*quick_ack*/) 
 // ---------------------------------------------------------------------------
 Result<size_t> Type3WebSocketTransport::read_next(BufferSlice *message, uint32 *quick_ack) {
   if (ws_closed_) {
-    return 0;
+    return Status::Error("WebSocket connection closed");
   }
 
   while (true) {
     // Try to extract a complete WS frame
     TRY_RESULT(frame_payload, read_ws_frame());
     if (frame_payload.size() == 0) {
-      // Not enough data yet
-      break;
+      // Not enough data yet — need at least 2 bytes for a WS frame header
+      return input_->size() < 2 ? 2 : 1;
     }
 
     // AES-CTR decrypt the payload in-place
@@ -245,10 +245,8 @@ Result<size_t> Type3WebSocketTransport::read_next(BufferSlice *message, uint32 *
       pkt_reassembly_buf_.erase(0, pkt_reassembly_offset_);
       pkt_reassembly_offset_ = 0;
     }
-    return 0;
+    return 0;  // packet is ready
   }
-
-  return 0;
 }
 
 // ---------------------------------------------------------------------------
