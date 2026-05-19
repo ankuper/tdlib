@@ -4,7 +4,7 @@
 // with AES-256-CTR obfuscated-2 encoding per teleproto3 spec/wire-format.md §4.
 //
 // Architecture:
-//   init()   — sends 4-byte Session Header + 64-byte random_header, derives AES-CTR keys
+//   init()   — sends 64-byte obfuscated-2 init (matching tdesktop), derives AES-CTR keys
 //   write()  — AES-CTR encrypts + wraps in WS binary frame
 //   read_next() — strips WS framing, AES-CTR decrypts, extracts intermediate-format packets
 //
@@ -62,7 +62,7 @@ class Type3WebSocketTransport final : public IStreamTransport {
   string pkt_reassembly_buf_;
   size_t pkt_reassembly_offset_{0};
 
-  // Send the 4-byte Session Header and 64-byte random_header; derive AES-CTR keys.
+  // Send 64-byte obfuscated-2 init with encrypt-then-restore; derive AES-CTR keys.
   void send_init_sequence();
 
   // Wrap raw (already AES-CTR encrypted) bytes in a WS binary frame and append to output_.
