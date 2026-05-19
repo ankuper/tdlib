@@ -45,7 +45,8 @@ class WebSocketType3Proxy final : public TransparentProxy {
  private:
   enum class State {
     // === TYPE3-PROXY BEGIN ===
-    Init,          // First loop_impl() call: detect wss:// and set up TLS pipeline
+    Init,            // First loop_impl() call: detect wss:// and set up TLS pipeline
+    TlsHandshake,   // Pump TLS until SSL handshake completes (wss:// only)
     // === TYPE3-PROXY END ===
     SendWsUpgrade,
     WaitWsResponse,
@@ -74,8 +75,9 @@ class WebSocketType3Proxy final : public TransparentProxy {
   Status wait_ws_response();
 
   // === TYPE3-PROXY BEGIN ===
-  Status do_init();   // State::Init — detect wss://, create SslStream + wire ByteFlow pipeline
-  void pump_tls();    // Pump read_source_ and write_source_ to drive SSL I/O (incl. handshake)
+  Status do_init();           // State::Init — detect wss://, create SslStream + wire ByteFlow pipeline
+  Status wait_tls_handshake();// State::TlsHandshake — pump TLS until is_init_finished()
+  void pump_tls();            // Pump read_source_ and write_source_ to drive SSL I/O
   // === TYPE3-PROXY END ===
 
   Status loop_impl() final;

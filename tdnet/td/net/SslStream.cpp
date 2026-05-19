@@ -198,6 +198,12 @@ class SslStreamImpl {
     return write_flow_.write(slice);
   }
 
+  // === TYPE3-PROXY BEGIN ===
+  bool is_init_finished() const {
+    return SSL_is_init_finished(ssl_handle_.get());
+  }
+  // === TYPE3-PROXY END ===
+
  private:
   SslHandle ssl_handle_;
 
@@ -380,6 +386,12 @@ size_t SslStream::flow_write(Slice slice) {
   return impl_->flow_write(slice);
 }
 
+// === TYPE3-PROXY BEGIN ===
+bool SslStream::is_init_finished() const {
+  return impl_ && impl_->is_init_finished();
+}
+// === TYPE3-PROXY END ===
+
 }  // namespace td
 
 #else
@@ -417,6 +429,12 @@ size_t SslStream::flow_read(MutableSlice slice) {
 size_t SslStream::flow_write(Slice slice) {
   UNREACHABLE();
 }
+
+// === TYPE3-PROXY BEGIN ===
+bool SslStream::is_init_finished() const {
+  return false;
+}
+// === TYPE3-PROXY END ===
 
 }  // namespace td
 
