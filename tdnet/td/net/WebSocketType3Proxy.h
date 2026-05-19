@@ -10,10 +10,21 @@
 //   username_ = full endpoint URL, e.g. "wss://host:443/ws/path"
 //   password_ = "" (unused)
 //
+// TLS support (AC #1-#7, Story 10-7):
+//   When the endpoint starts with "wss://", a real OpenSSL TLS handshake
+//   is performed transparently via TDLib's SslStream ByteFlow pipeline.
+//   The pipeline mirrors HttpConnectionBase:
+//     Read:  fd_.input_buffer → read_source_ >> ssl_stream_.read_byte_flow() >> read_sink_
+//     Write: app_write_buf_   → write_source_ >> ssl_stream_.write_byte_flow() >> write_sink_ → fd_.output_buffer
+//   SSL manages the handshake internally; application data flows once it completes.
+//
 #pragma once
 
+#include "td/net/SslStream.h"
 #include "td/net/TransparentProxy.h"
 
+#include "td/utils/buffer.h"
+#include "td/utils/ByteFlow.h"
 #include "td/utils/Status.h"
 
 namespace td {
@@ -33,20 +44,49 @@ class WebSocketType3Proxy final : public TransparentProxy {
 
  private:
   enum class State {
+    // === TYPE3-PROXY BEGIN ===
+    Init,          // First loop_impl() call: detect wss:// and set up TLS pipeline
+    // === TYPE3-PROXY END ===
     SendWsUpgrade,
     WaitWsResponse,
     Connected
-  } state_{State::SendWsUpgrade};
+  } state_{State::Init};
 
   string ws_key_;  // base64-encoded 16-byte random Sec-WebSocket-Key
+
+  // === TYPE3-PROXY BEGIN ===
+  bool use_tls_{false};   // true when endpoint uses wss://
+  SslStream ssl_stream_;  // valid only when use_tls_ == true
+
+  // ByteFlow pipeline for TLS I/O (mirrors HttpConnectionBase pattern).
+  // Initialized lazily in State::Init (first loop_impl() call).
+  // Read path:  fd_.input_buffer → read_source_ >> ssl_stream_.read_byte_flow() >> read_sink_
+  // Write path: app_write_buf_   → write_source_ >> ssl_stream_.write_byte_flow() >> write_sink_
+  ChainBufferWriter app_write_buf_;          // application-side write buffer (plaintext)
+  ChainBufferReader app_write_reader_;       // reader into app_write_buf_
+  ByteFlowSource    read_source_;            // source from fd_.input_buffer()
+  ByteFlowSink      read_sink_;              // sink: decrypted plaintext output
+  ByteFlowSource    write_source_;           // source from app_write_reader_
+  ByteFlowMoveSink  write_sink_;             // sink: writes encrypted bytes to fd_.output_buffer()
+  // === TYPE3-PROXY END ===
 
   void send_ws_upgrade();
   Status wait_ws_response();
 
+  // === TYPE3-PROXY BEGIN ===
+  Status do_init();   // State::Init — detect wss://, create SslStream + wire ByteFlow pipeline
+  void pump_tls();    // Pump read_source_ and write_source_ to drive SSL I/O (incl. handshake)
+  // === TYPE3-PROXY END ===
+
   Status loop_impl() final;
 
-  // Parse the endpoint URL stored in username_ into host + path.
+  // Parse the endpoint URL stored in username_ into host:port and path.
   static void parse_endpoint(const string &url, string *host, string *path);
+
+  // === TYPE3-PROXY BEGIN ===
+  // Extract hostname only (no port) for TLS SNI.
+  static string extract_sni_host(const string &url);
+  // === TYPE3-PROXY END ===
 };
 
 }  // namespace td
