@@ -93,13 +93,19 @@ Status WebSocketType3Proxy::do_init() {
 
     read_source_ >> ssl_stream_.read_byte_flow() >> read_sink_;
     write_source_ >> ssl_stream_.write_byte_flow() >> write_sink_;
+
+    // Kick-start the TLS handshake — SSL_connect is implicit in SSL_read/SSL_write.
+    // pump_tls() triggers the first ClientHello via write_source_ wakeup.
+    pump_tls();
+
+    state_ = State::TlsHandshake;
     // === TYPE3-PROXY END ===
   } else {
     // Plain ws:// — no TLS (AC #2)
     use_tls_ = false;
+    state_ = State::SendWsUpgrade;
   }
 
-  state_ = State::SendWsUpgrade;
   return Status::OK();
 }
 
@@ -116,6 +122,34 @@ void WebSocketType3Proxy::pump_tls() {
   read_source_.wakeup();
   // Push plaintext from app_write_buf_ through SSL encrypt → fd_.output_buffer()
   write_source_.wakeup();
+}
+
+// ---------------------------------------------------------------------------
+// wait_tls_handshake — pump TLS byte flows until OpenSSL handshake completes.
+// Called from loop_impl() on each I/O event while in State::TlsHandshake.
+// Once SSL_is_init_finished() returns true, transitions to SendWsUpgrade.
+// ---------------------------------------------------------------------------
+Status WebSocketType3Proxy::wait_tls_handshake() {
+  CHECK(state_ == State::TlsHandshake);
+  CHECK(use_tls_);
+
+  pump_tls();
+
+  // Check for TLS errors
+  if (read_sink_.status().is_error()) {
+    return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS handshake failed: "
+                                  << read_sink_.status().message());
+  }
+  if (write_sink_.status().is_error()) {
+    return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS handshake failed: "
+                                  << write_sink_.status().message());
+  }
+
+  if (ssl_stream_.is_init_finished()) {
+    VLOG(proxy) << "WebSocketType3Proxy: TLS handshake complete";
+    state_ = State::SendWsUpgrade;
+  }
+  return Status::OK();
 }
 // === TYPE3-PROXY END ===
 
@@ -285,12 +319,25 @@ Status WebSocketType3Proxy::loop_impl() {
     // === TYPE3-PROXY BEGIN ===
     case State::Init:
       TRY_STATUS(do_init());
-      // do_init() sets state_ = SendWsUpgrade; fall through immediately
+      // do_init() sets state_ to TlsHandshake (wss://) or SendWsUpgrade (ws://)
+      if (state_ == State::TlsHandshake) {
+        break;  // wait for next I/O event to progress handshake
+      }
+      // ws:// — fall through to SendWsUpgrade immediately
       [[fallthrough]];
     // === TYPE3-PROXY END ===
     case State::SendWsUpgrade:
       send_ws_upgrade();
       break;
+    // === TYPE3-PROXY BEGIN ===
+    case State::TlsHandshake:
+      TRY_STATUS(wait_tls_handshake());
+      // If handshake just completed, send WS upgrade in the same loop
+      if (state_ == State::SendWsUpgrade) {
+        send_ws_upgrade();
+      }
+      break;
+    // === TYPE3-PROXY END ===
     case State::WaitWsResponse:
       TRY_STATUS(wait_ws_response());
       break;
