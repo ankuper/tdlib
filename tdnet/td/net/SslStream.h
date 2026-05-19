@@ -33,6 +33,11 @@ class SslStream {
   size_t flow_read(MutableSlice slice);
   size_t flow_write(Slice slice);
 
+  // === TYPE3-PROXY BEGIN ===
+  // Returns true once the TLS handshake has completed (wraps SSL_is_init_finished).
+  bool is_init_finished() const;
+  // === TYPE3-PROXY END ===
+
   explicit operator bool() const noexcept {
     return static_cast<bool>(impl_);
   }
