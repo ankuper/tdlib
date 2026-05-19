@@ -21,6 +21,7 @@ set(TD_TEST_SOURCE
   # === TYPE3-PROXY BEGIN ===
   ${CMAKE_CURRENT_SOURCE_DIR}/type3_schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/type3_transport.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/type3_wss_proxy.cpp
   # === TYPE3-PROXY END ===
 
   ${CMAKE_CURRENT_SOURCE_DIR}/data.cpp
