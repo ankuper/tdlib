@@ -130,7 +130,7 @@ void Type3WebSocketTransport::send_init_sequence() {
   char header_copy[HEADER_SIZE];
   std::memcpy(header_copy, header, HEADER_SIZE);  // save plaintext
 
-  output_aes_.encrypt(MutableSlice(header, HEADER_SIZE), Slice(header, HEADER_SIZE));
+  output_aes_.encrypt(Slice(header_copy, HEADER_SIZE), MutableSlice(header, HEADER_SIZE));
 
   // Restore bytes 0..55 to plaintext (server needs these unencrypted for KDF)
   std::memcpy(header, header_copy, 56);
