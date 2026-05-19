@@ -21,9 +21,8 @@ namespace td {
 namespace mtproto {
 
 // ---------------------------------------------------------------------------
-// init() — sends Session Header + random_header, derives AES-CTR keys
-// This mirrors ObfuscatedTransport::init() so that all crypto setup happens
-// synchronously when RawConnection binds the transport to its socket buffers.
+// init() — sends 64-byte obfuscated-2 init, derives AES-CTR keys
+// Matches tdesktop's ConnectionTeleproto3::onWsConnected() flow.
 // ---------------------------------------------------------------------------
 void Type3WebSocketTransport::init(ChainBufferReader *input, ChainBufferWriter *output) {
   input_ = input;
@@ -32,102 +31,111 @@ void Type3WebSocketTransport::init(ChainBufferReader *input, ChainBufferWriter *
 }
 
 void Type3WebSocketTransport::send_init_sequence() {
-  // ---- Session Header (4 bytes, plaintext) sent as WS binary frame ----
-  // command_type=0x01 (MTPROTO_PASSTHROUGH), version=0x01, flags=0x0000
-  const uint8 session_header[4] = {0x01, 0x01, 0x00, 0x00};
-  append_ws_frame(Slice(reinterpret_cast<const char *>(session_header), 4));
-
-  // ---- 64-byte random_header + AES-CTR key derivation ----
-  // Layout per spec/wire-format.md §4.2:
+  // ---- 64-byte obfuscated-2 init (matches tdesktop's ConnectionTeleproto3) ----
+  //
+  // Layout per obfuscated-2 protocol (server-side obfs2_parse_header):
   //   bytes  0-7   : random (not used for KDF)
-  //   bytes  8-39  : 32 bytes used in read_key derivation
-  //   bytes 40-55  : 16 bytes used for read_iv
-  //   bytes 56-63  : after encryption bytes[56..60) must be a magic tag
+  //   bytes  8-39  : 32 bytes used in send_key derivation (server: read_key)
+  //   bytes 24-55  : 32 bytes used (reversed) in recv_key derivation (server: write_key)
+  //   bytes  8-23  : 16 bytes used (reversed) in recv_iv (server: write_iv)
+  //   bytes 40-55  : 16 bytes used in send_iv (server: read_iv)
+  //   bytes 56-59  : plaintext magic tag (0xDDDDDDDD = intermediate padding mode)
+  //   bytes 60-61  : DC ID (signed int16, little-endian)
+  //   bytes 62-63  : random
   //
-  // KDF:
-  //   secret_bytes = hex-decode(secret_.get_encoded_secret())  [first 16 bytes of raw secret]
-  //   read_key  = SHA256(random_header[8..40]  || secret_bytes[0..16])
-  //   read_iv   = random_header[40..56]
-  //   write_key = SHA256(reverse(random_header[24..56]) || secret_bytes[0..16])
-  //   write_iv  = reverse(random_header[8..24])
+  // KDF (client perspective — matches tdesktop exactly):
+  //   send_key = SHA256(header[8..40]  || proxy_secret[0..16])
+  //   send_iv  = header[40..56]
+  //   recv_key = SHA256(reverse(header[24..56]) || proxy_secret[0..16])
+  //   recv_iv  = reverse(header[8..24])
   //
-  // The "secret bytes" here are the raw secret carried by ProxySecret.
-  // ProxySecret::get_proxy_secret() returns the 16-byte AES secret portion
-  // (same field used by ObfuscatedTransport for the mix-in SHA256).
+  // After key derivation, encrypt all 64 bytes with send AES-CTR (advances the
+  // CTR state by 4 blocks = 64 bytes). Then restore plaintext for bytes 0..55
+  // (server derives keys from those plaintext bytes). Bytes 56..63 stay encrypted
+  // on the wire — the server decrypts them with its read_key to verify the magic.
 
   const size_t HEADER_SIZE = 64;
   char header[HEADER_SIZE];
 
-  // Try up to 10 times to get a header whose encrypted bytes[56..60) match
-  // one of the magic tags after CTR-encryption.  In practice the first or
-  // second attempt succeeds because we force the plaintext tag below and just
-  // need the ciphertext to avoid accidental look-alike sequences.
-  // Per spec §4.2 the SENDER controls the magic via plaintext; the receiver
-  // validates plaintext bytes 56..60 are a known tag BEFORE encryption:
-  // we simply write the tag into plaintext bytes [56..60) and let AES-CTR
-  // encrypt them — the encrypted output will be random-looking to an observer.
   for (int attempt = 0; attempt < 10; attempt++) {
     Random::secure_bytes(MutableSlice(header, HEADER_SIZE));
-    // Force bytes 0-3 to avoid HTTP-look-alike magic that anti-probe rules check
+    // Avoid HTTP-look-alike magic at bytes 0-3 (anti-probe)
     uint32 first_int = as<uint32>(header);
     if (first_int == 0x44414548 || first_int == 0x54534f50 || first_int == 0x20544547 ||
-        first_int == 0x4954504f || first_int == 0x02010316) {
+        first_int == 0x4954504f || first_int == 0x02010316 ||
+        static_cast<uint8>(header[0]) == 0xef) {
+      continue;
+    }
+    // Also avoid magic tags in plaintext bytes 56-59 matching reserved patterns
+    if (first_int == 0xeeeeeeee || first_int == 0xdddddddd) {
       continue;
     }
     break;
   }
 
-  // Write plaintext magic tag at bytes [56..60) — 0xdddddddd (intermediate padding mode)
+  // Write plaintext magic at bytes [56..60): 0xDDDDDDDD (intermediate padding mode)
   as<uint32>(header + 56) = 0xdddddddd;
+
+  // Write DC ID at bytes [60..62) (signed int16, little-endian)
+  as<int16>(header + 60) = dc_id_;
 
   // ---- Derive keys ----
   Slice proxy_secret = secret_.get_proxy_secret();  // 16-byte AES secret
-  // P8/D1: inline secret validation — must be at least 16 bytes for AES-256-CTR KDF
   if (proxy_secret.size() < 16) {
     LOG(ERROR) << "Type3WebSocket: proxy secret too short (" << proxy_secret.size() << " bytes, need >= 16)";
     ws_closed_ = true;
     return;
   }
 
-  // read_key = SHA256(header[8..40] || proxy_secret[0..16])
-  UInt256 read_key;
+  // send_key = SHA256(header[8..40] || proxy_secret[0..16])
+  UInt256 send_key;
   {
     Sha256State state;
     state.init();
     state.feed(Slice(header + 8, 32));
     state.feed(proxy_secret);
-    state.extract(as_mutable_slice(read_key));
+    state.extract(as_mutable_slice(send_key));
   }
-  // read_iv = header[40..56]
-  UInt128 read_iv = as<UInt128>(header + 40);
+  // send_iv = header[40..56]
+  UInt128 send_iv = as<UInt128>(header + 40);
 
-  // write_key = SHA256(reverse(header[24..56]) || proxy_secret[0..16])
+  // recv_key = SHA256(reverse(header[24..56]) || proxy_secret[0..16])
   char rev_buf[32];
   std::memcpy(rev_buf, header + 24, 32);
   std::reverse(rev_buf, rev_buf + 32);
-  UInt256 write_key;
+  UInt256 recv_key;
   {
     Sha256State state;
     state.init();
     state.feed(Slice(rev_buf, 32));
     state.feed(proxy_secret);
-    state.extract(as_mutable_slice(write_key));
+    state.extract(as_mutable_slice(recv_key));
   }
-  // write_iv = reverse(header[8..24])
+  // recv_iv = reverse(header[8..24])
   char rev_iv_buf[16];
   std::memcpy(rev_iv_buf, header + 8, 16);
   std::reverse(rev_iv_buf, rev_iv_buf + 16);
-  UInt128 write_iv = as<UInt128>(rev_iv_buf);
+  UInt128 recv_iv = as<UInt128>(rev_iv_buf);
 
-  // Initialise AES-CTR states (continuous across WS frames — no per-frame reset)
-  input_aes_.init(as_slice(read_key), as_slice(read_iv));
-  output_aes_.init(as_slice(write_key), as_slice(write_iv));
+  // Initialise AES-CTR states (continuous across all WS frames — no per-frame reset)
+  output_aes_.init(as_slice(send_key), as_slice(send_iv));
+  input_aes_.init(as_slice(recv_key), as_slice(recv_iv));
 
-  // Send the 64-byte random_header as a WS binary frame (plaintext, NOT yet encrypted —
-  // the AES-CTR stream begins AFTER the header per spec §4 "The obfuscated-2 stream begins
-  // at byte 0 of the WS payload stream AFTER the Session Header frame").
-  // NOTE: the spec says the random_header itself is sent plaintext; subsequent DATA frames
-  // are AES-CTR encrypted.  So we do NOT encrypt the random_header before sending it.
+  // ---- Encrypt-then-restore (critical for CTR state synchronisation) ----
+  // Encrypt the FULL 64-byte nonce with the output (send) AES-CTR.
+  // This advances the CTR counter by 4 blocks. The server does the same
+  // (evp_crypt(read_aeskey, header, header, 64)) to advance its read CTR.
+  // Then restore bytes 0..55 to plaintext — server derives keys from those.
+  // Bytes 56..63 stay encrypted — server decrypts to verify magic + DC ID.
+  char header_copy[HEADER_SIZE];
+  std::memcpy(header_copy, header, HEADER_SIZE);  // save plaintext
+
+  output_aes_.encrypt(MutableSlice(header, HEADER_SIZE), Slice(header, HEADER_SIZE));
+
+  // Restore bytes 0..55 to plaintext (server needs these unencrypted for KDF)
+  std::memcpy(header, header_copy, 56);
+
+  // Send the 64-byte init as a single WS binary frame
   append_ws_frame(Slice(header, HEADER_SIZE));
 }
 
