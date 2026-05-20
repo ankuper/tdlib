@@ -737,6 +737,17 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
           promise_.set_value(std::move(data));
         }
       }
+      // === TYPE3-PROXY BEGIN ===
+      void set_result(BufferedFd<SocketFd> fd, unique_ptr<TlsPipeline> tls_pipeline) final {
+        ConnectionData data;
+        data.ip_address = ip_address_;
+        data.buffered_socket_fd = std::move(fd);
+        data.connection_token = std::move(connection_token_);
+        data.stats_callback = std::move(stats_callback_);
+        data.tls_pipeline = std::move(tls_pipeline);
+        promise_.set_value(std::move(data));
+      }
+      // === TYPE3-PROXY END ===
       void on_connected() final {
         if (use_connection_token_) {
           connection_token_ = mtproto::ConnectionManager::connection_proxy(
@@ -970,7 +981,8 @@ void ConnectionCreator::client_create_raw_connection(Result<ConnectionData> r_co
   auto connection_data = r_connection_data.move_as_ok();
   auto raw_connection =
       mtproto::RawConnection::create(connection_data.ip_address, std::move(connection_data.buffered_socket_fd),
-                                     std::move(transport_type), std::move(connection_data.stats_callback));
+                                     std::move(transport_type), std::move(connection_data.stats_callback),
+                                     std::move(connection_data.tls_pipeline));
   raw_connection->set_connection_token(std::move(connection_data.connection_token));
 
   raw_connection->extra().extra = network_generation;
