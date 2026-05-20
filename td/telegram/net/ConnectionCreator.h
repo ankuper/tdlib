@@ -182,6 +182,9 @@ class ConnectionCreator final : public NetQueryCallback {
     BufferedFd<SocketFd> buffered_socket_fd;
     mtproto::ConnectionManager::ConnectionToken connection_token;
     unique_ptr<mtproto::RawConnection::StatsCallback> stats_callback;
+    // === TYPE3-PROXY BEGIN ===
+    unique_ptr<TlsPipeline> tls_pipeline;  // non-null for wss:// Teleproto3
+    // === TYPE3-PROXY END ===
   };
 
   uint64 next_token() {

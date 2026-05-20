@@ -3,11 +3,13 @@
 // WebSocketType3Proxy — implementation
 // Handles HTTP/1.1 WebSocket upgrade handshake for Type3 proxy connections.
 // Story 10-7: adds real TLS handshake via SslStream for wss:// endpoints.
+// Story 10-8: persists TLS pipeline across connection handoff (Variant C).
 //
 #include "td/net/WebSocketType3Proxy.h"
 
 #include "td/net/SslCtx.h"
 #include "td/net/SslStream.h"
+#include "td/net/TlsPipeline.h"
 
 #include "td/utils/base64.h"
 #include "td/utils/ByteFlow.h"
@@ -61,7 +63,7 @@ string WebSocketType3Proxy::extract_sni_host(const string &url) {
 }
 
 // ---------------------------------------------------------------------------
-// do_init — detect wss:// scheme, create SslStream, wire ByteFlow pipeline.
+// do_init — detect wss:// scheme, create TlsPipeline, wire ByteFlow pipeline.
 // Called once from loop_impl() when state_ == Init.
 // AC: #1, #2, #3, #4, #6, #8
 // ---------------------------------------------------------------------------
@@ -79,24 +81,20 @@ Status WebSocketType3Proxy::do_init() {
     TRY_RESULT(ssl_ctx, SslCtx::create(CSlice(), SslCtx::VerifyPeer::On));
 
     // Create SslStream — sets SNI via SSL_set_tlsext_host_name internally (AC #4)
-    // Uses TDLib's existing SslStream, no custom OpenSSL code (AC #3)
     TRY_RESULT(ssl, SslStream::create(CSlice(sni_host), std::move(ssl_ctx)));
-    ssl_stream_ = std::move(ssl);
 
-    // Wire ByteFlow pipeline (mirrors HttpConnectionBase constructor pattern):
-    //   Read:  fd_.input_buffer → read_source_ >> ssl_stream_.read_byte_flow() >> read_sink_
-    //   Write: app_write_buf_   → write_source_ >> ssl_stream_.write_byte_flow() >> write_sink_ → fd_.output_buffer
-    app_write_reader_ = app_write_buf_.extract_reader();
-    read_source_ = ByteFlowSource(&fd_.input_buffer());
-    write_source_ = ByteFlowSource(&app_write_reader_);
-    write_sink_ = ByteFlowMoveSink(&fd_.output_buffer());
+    // Allocate TlsPipeline on the heap — internal ByteFlow pointers must remain
+    // stable when ownership is later transferred to RawConnectionDefault.
+    tls_pipeline_ = make_unique<TlsPipeline>();
+    tls_pipeline_->ssl_stream = std::move(ssl);
 
-    read_source_ >> ssl_stream_.read_byte_flow() >> read_sink_;
-    write_source_ >> ssl_stream_.write_byte_flow() >> write_sink_;
+    // Wire ByteFlow pipeline:
+    //   Read:  fd_.input_buffer → read_source >> ssl_stream.read_byte_flow() >> read_sink
+    //   Write: app_write_buf   → write_source >> ssl_stream.write_byte_flow() >> write_sink → fd_.output_buffer
+    tls_pipeline_->wire(&fd_.input_buffer(), &fd_.output_buffer());
 
-    // Kick-start the TLS handshake — SSL_connect is implicit in SSL_read/SSL_write.
-    // pump_tls() triggers the first ClientHello via write_source_ wakeup.
-    pump_tls();
+    // Kick-start the TLS handshake
+    tls_pipeline_->pump();
 
     state_ = State::TlsHandshake;
     // === TYPE3-PROXY END ===
@@ -111,23 +109,16 @@ Status WebSocketType3Proxy::do_init() {
 
 // ---------------------------------------------------------------------------
 // pump_tls — drive both byte flow directions for TLS I/O.
-// This drives the OpenSSL handshake transparently: SSL_read/SSL_write are
-// called internally by ByteFlow wakeup; application data only flows after
-// the handshake completes. AC: #1, #5
 // ---------------------------------------------------------------------------
 // === TYPE3-PROXY BEGIN ===
 void WebSocketType3Proxy::pump_tls() {
   CHECK(use_tls_);
-  // Push ciphertext from fd_.input_buffer() through SSL decrypt → read_sink_ output
-  read_source_.wakeup();
-  // Push plaintext from app_write_buf_ through SSL encrypt → fd_.output_buffer()
-  write_source_.wakeup();
+  CHECK(tls_pipeline_);
+  tls_pipeline_->pump();
 }
 
 // ---------------------------------------------------------------------------
 // wait_tls_handshake — pump TLS byte flows until OpenSSL handshake completes.
-// Called from loop_impl() on each I/O event while in State::TlsHandshake.
-// Once SSL_is_init_finished() returns true, transitions to SendWsUpgrade.
 // ---------------------------------------------------------------------------
 Status WebSocketType3Proxy::wait_tls_handshake() {
   CHECK(state_ == State::TlsHandshake);
@@ -136,16 +127,16 @@ Status WebSocketType3Proxy::wait_tls_handshake() {
   pump_tls();
 
   // Check for TLS errors
-  if (read_sink_.status().is_error()) {
+  if (tls_pipeline_->read_sink.status().is_error()) {
     return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS handshake failed: "
-                                  << read_sink_.status().message());
+                                  << tls_pipeline_->read_sink.status().message());
   }
-  if (write_sink_.status().is_error()) {
+  if (tls_pipeline_->write_sink.status().is_error()) {
     return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS handshake failed: "
-                                  << write_sink_.status().message());
+                                  << tls_pipeline_->write_sink.status().message());
   }
 
-  if (ssl_stream_.is_init_finished()) {
+  if (tls_pipeline_->ssl_stream.is_init_finished()) {
     VLOG(proxy) << "WebSocketType3Proxy: TLS handshake complete";
     state_ = State::SendWsUpgrade;
   }
@@ -180,11 +171,10 @@ void WebSocketType3Proxy::send_ws_upgrade() {
 
   // === TYPE3-PROXY BEGIN ===
   if (use_tls_) {
-    // Write to app_write_buf_ → flows through SSL encrypt → fd_.output_buffer() (AC #5)
-    // If TLS handshake is still in progress, OpenSSL will buffer application data
-    // internally and send it once the handshake completes (standard OpenSSL behaviour).
-    app_write_buf_.append(upgrade_request);
-    pump_tls();
+    CHECK(tls_pipeline_);
+    // Write to app_write_buf → flows through SSL encrypt → fd_.output_buffer() (AC #5)
+    tls_pipeline_->app_write_buf.append(upgrade_request);
+    tls_pipeline_->pump();
   } else {
     // Plaintext ws:// — direct write (AC #2)
     fd_.output_buffer().append(upgrade_request);
@@ -203,21 +193,22 @@ Status WebSocketType3Proxy::wait_ws_response() {
   Slice response_data;
 
   if (use_tls_) {
+    CHECK(tls_pipeline_);
     // Pump TLS: decrypt incoming ciphertext from fd_.input_buffer() (AC #5)
     pump_tls();
 
     // Check for TLS errors (AC #7)
-    if (read_sink_.status().is_error()) {
-      return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS handshake failed: "
-                                    << read_sink_.status().message());
+    if (tls_pipeline_->read_sink.status().is_error()) {
+      return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS error: "
+                                    << tls_pipeline_->read_sink.status().message());
     }
-    if (write_sink_.status().is_error()) {
-      return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS handshake failed: "
-                                    << write_sink_.status().message());
+    if (tls_pipeline_->write_sink.status().is_error()) {
+      return Status::Error(PSLICE() << "WebSocketType3Proxy: TLS error: "
+                                    << tls_pipeline_->write_sink.status().message());
     }
 
-    // Read decrypted plaintext from read_sink_ output
-    auto *output = read_sink_.get_output();
+    // Read decrypted plaintext from read_sink output
+    auto *output = tls_pipeline_->read_sink.get_output();
     size_t available = output->size();
     if (available > 0) {
       decrypted.resize(available);
@@ -301,14 +292,31 @@ Status WebSocketType3Proxy::wait_ws_response() {
     // For plaintext: advance the fd_ input buffer past the headers
     fd_.input_buffer().advance(eoh + 4);
   }
-  // For TLS: read_sink_ output was already consumed above via output->advance().
-  // fd_.input_buffer() ciphertext was consumed by ByteFlow read_source_ automatically.
-  // === TYPE3-PROXY END ===
+  // For TLS: read_sink output was already consumed above via output->advance().
 
   // Hand off to ConnectionCreator — WS is established.
+  // tear_down() will call the appropriate set_result overload
+  // depending on whether tls_pipeline_ is set.
   state_ = State::Connected;
   stop();
+  // === TYPE3-PROXY END ===
   return Status::OK();
+}
+// ---------------------------------------------------------------------------
+// tear_down — override to pass TLS pipeline when handing off wss:// connections.
+// For ws:// connections and error paths, delegates to TransparentProxy::tear_down().
+// ---------------------------------------------------------------------------
+void WebSocketType3Proxy::tear_down() {
+  if (state_ == State::Connected && use_tls_ && tls_pipeline_ && callback_) {
+    // wss:// success path: pass TLS pipeline to RawConnectionDefault
+    VLOG(proxy) << "WebSocketType3Proxy: handing off TLS pipeline to RawConnection";
+    Scheduler::unsubscribe(fd_.get_poll_info().get_pollable_fd_ref());
+    callback_->set_result(std::move(fd_), std::move(tls_pipeline_));
+    callback_.reset();
+  } else {
+    // ws:// success, error, or cancel: use parent's tear_down
+    TransparentProxy::tear_down();
+  }
 }
 
 // ---------------------------------------------------------------------------

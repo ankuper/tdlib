@@ -11,6 +11,10 @@
 #include "td/mtproto/ProxySecret.h"
 #include "td/mtproto/Transport.h"
 
+// === TYPE3-PROXY BEGIN ===
+#include "td/net/TlsPipeline.h"
+// === TYPE3-PROXY END ===
+
 #if TD_DARWIN_WATCH_OS
 #include "td/net/DarwinHttp.h"
 #endif
@@ -38,14 +42,26 @@ RawConnection::~RawConnection() {
 
 class RawConnectionDefault final : public RawConnection {
  public:
+  // === TYPE3-PROXY BEGIN ===
   RawConnectionDefault(BufferedFd<SocketFd> buffered_socket_fd, TransportType transport_type,
-                       unique_ptr<StatsCallback> stats_callback)
+                       unique_ptr<StatsCallback> stats_callback, unique_ptr<TlsPipeline> tls_pipeline)
       : socket_fd_(std::move(buffered_socket_fd))
       , transport_(create_transport(std::move(transport_type)))
-      , stats_callback_(std::move(stats_callback)) {
+      , stats_callback_(std::move(stats_callback))
+      , tls_pipeline_(std::move(tls_pipeline)) {
     LOG(DEBUG) << "Create raw connection " << this;
-    transport_->init(&socket_fd_.input_buffer(), &socket_fd_.output_buffer());
+    if (tls_pipeline_) {
+      // TLS mode: rebind the pipeline's source/sink to our socket fd's buffers
+      // (the old fd_ from WebSocketType3Proxy was moved away).
+      // Transport reads decrypted data, writes plaintext — TLS is transparent.
+      tls_pipeline_->rewire(&socket_fd_.input_buffer(), &socket_fd_.output_buffer());
+      transport_->init(tls_pipeline_->plaintext_input(), tls_pipeline_->plaintext_output());
+    } else {
+      // Plain mode: transport reads/writes directly from/to socket buffers.
+      transport_->init(&socket_fd_.input_buffer(), &socket_fd_.output_buffer());
+    }
   }
+  // === TYPE3-PROXY END ===
 
   void set_connection_token(ConnectionManager::ConnectionToken connection_token) final {
     connection_token_ = std::move(connection_token);
@@ -141,6 +157,9 @@ class RawConnectionDefault final : public RawConnection {
   bool has_error_{false};
 
   unique_ptr<StatsCallback> stats_callback_;
+  // === TYPE3-PROXY BEGIN ===
+  unique_ptr<TlsPipeline> tls_pipeline_;  // non-null for wss:// Teleproto3
+  // === TYPE3-PROXY END ===
 
   ConnectionManager::ConnectionToken connection_token_;
 
@@ -160,6 +179,12 @@ class RawConnectionDefault final : public RawConnection {
     if (r.is_ok()) {
       on_read(r.ok(), callback);
     }
+    // === TYPE3-PROXY BEGIN ===
+    // Pump TLS: decrypt ciphertext from socket → read_sink (plaintext for transport)
+    if (tls_pipeline_) {
+      tls_pipeline_->pump();
+    }
+    // === TYPE3-PROXY END ===
     while (transport_->can_read()) {
       BufferSlice packet;
       uint32 quick_ack = 0;
@@ -250,6 +275,12 @@ class RawConnectionDefault final : public RawConnection {
   }
 
   Status flush_write() {
+    // === TYPE3-PROXY BEGIN ===
+    // Pump TLS: encrypt plaintext from app_write_buf → socket output buffer
+    if (tls_pipeline_) {
+      tls_pipeline_->pump();
+    }
+    // === TYPE3-PROXY END ===
     TRY_RESULT(size, socket_fd_.flush_write());
     if (size > 0 && stats_callback_) {
       stats_callback_->on_write(size);
@@ -482,12 +513,13 @@ class RawConnectionHttp final : public RawConnection {
 
 unique_ptr<RawConnection> RawConnection::create(IPAddress ip_address, BufferedFd<SocketFd> buffered_socket_fd,
                                                 TransportType transport_type,
-                                                unique_ptr<StatsCallback> stats_callback) {
+                                                unique_ptr<StatsCallback> stats_callback,
+                                                unique_ptr<TlsPipeline> tls_pipeline) {
 #if TD_DARWIN_WATCH_OS
   return td::make_unique<RawConnectionHttp>(std::move(ip_address), std::move(stats_callback));
 #else
   return td::make_unique<RawConnectionDefault>(std::move(buffered_socket_fd), std::move(transport_type),
-                                               std::move(stats_callback));
+                                               std::move(stats_callback), std::move(tls_pipeline));
 #endif
 }
 

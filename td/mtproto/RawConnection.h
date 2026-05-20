@@ -20,6 +20,7 @@
 #include "td/utils/StorerBase.h"
 
 namespace td {
+class TlsPipeline;  // forward declaration
 namespace mtproto {
 
 class AuthKey;
@@ -42,7 +43,8 @@ class RawConnection {
   virtual ~RawConnection();
 
   static unique_ptr<RawConnection> create(IPAddress ip_address, BufferedFd<SocketFd> buffered_socket_fd,
-                                          TransportType transport_type, unique_ptr<StatsCallback> stats_callback);
+                                          TransportType transport_type, unique_ptr<StatsCallback> stats_callback,
+                                          unique_ptr<TlsPipeline> tls_pipeline = nullptr);
 
   virtual void set_connection_token(ConnectionManager::ConnectionToken connection_token) = 0;
 
