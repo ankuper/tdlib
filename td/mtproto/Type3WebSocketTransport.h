@@ -36,8 +36,8 @@ class Type3WebSocketTransport final : public IStreamTransport {
   bool can_read() const final { return !ws_closed_; }
   bool can_write() const final { return !ws_closed_; }
   void init(ChainBufferReader *input, ChainBufferWriter *output) final;
-  size_t max_prepend_size() const final { return 14; }  // 2 + 8 (ext len) + 4 (mask key) worst case
-  size_t max_append_size() const final { return 0; }
+  size_t max_prepend_size() const final { return 4; }   // 4-byte intermediate-format length prefix
+  size_t max_append_size() const final { return 15; }   // up to 15 bytes random padding (padded mode)
   TransportType get_type() const final {
     return TransportType{TransportType::WebSocketType3, dc_id_, secret_};
   }

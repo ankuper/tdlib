@@ -87,6 +87,16 @@ void Type3WebSocketTransport::send_init_sequence() {
     return;
   }
 
+  // DEBUG: dump proxy_secret
+  {
+    string hex;
+    for (size_t i = 0; i < proxy_secret.size(); i++) {
+      char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)proxy_secret[i]);
+      hex += buf;
+    }
+    LOG(WARNING) << "T3_DEBUG: proxy_secret(" << proxy_secret.size() << ")=" << hex;
+  }
+
   // send_key = SHA256(header[8..40] || proxy_secret[0..16])
   UInt256 send_key;
   {
@@ -117,6 +127,28 @@ void Type3WebSocketTransport::send_init_sequence() {
   std::reverse(rev_iv_buf, rev_iv_buf + 16);
   UInt128 recv_iv = as<UInt128>(rev_iv_buf);
 
+  // DEBUG: dump keys and header before encryption
+  {
+    string hdr_hex, key_hex, iv_hex;
+    for (size_t i = 0; i < HEADER_SIZE; i++) {
+      char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)header[i]);
+      hdr_hex += buf;
+    }
+    auto key_slice = as_slice(send_key);
+    for (size_t i = 0; i < key_slice.size(); i++) {
+      char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)key_slice[i]);
+      key_hex += buf;
+    }
+    auto iv_slice = as_slice(send_iv);
+    for (size_t i = 0; i < iv_slice.size(); i++) {
+      char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)iv_slice[i]);
+      iv_hex += buf;
+    }
+    LOG(WARNING) << "T3_DEBUG: plaintext_header=" << hdr_hex;
+    LOG(WARNING) << "T3_DEBUG: send_key=" << key_hex;
+    LOG(WARNING) << "T3_DEBUG: send_iv=" << iv_hex;
+  }
+
   // Initialise AES-CTR states (continuous across all WS frames — no per-frame reset)
   output_aes_.init(as_slice(send_key), as_slice(send_iv));
   input_aes_.init(as_slice(recv_key), as_slice(recv_iv));
@@ -134,6 +166,23 @@ void Type3WebSocketTransport::send_init_sequence() {
 
   // Restore bytes 0..55 to plaintext (server needs these unencrypted for KDF)
   std::memcpy(header, header_copy, 56);
+
+  // DEBUG: dump wire header
+  {
+    string wire_hex;
+    for (size_t i = 0; i < HEADER_SIZE; i++) {
+      char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)header[i]);
+      wire_hex += buf;
+    }
+    LOG(WARNING) << "T3_DEBUG: wire_header=" << wire_hex;
+    // Dump encrypted bytes 56-63 separately
+    string enc_hex;
+    for (size_t i = 56; i < 64; i++) {
+      char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)header[i]);
+      enc_hex += buf;
+    }
+    LOG(WARNING) << "T3_DEBUG: encrypted_tag_bytes=" << enc_hex;
+  }
 
   // Send the 64-byte init as a single WS binary frame
   append_ws_frame(Slice(header, HEADER_SIZE));
@@ -190,15 +239,38 @@ void Type3WebSocketTransport::append_ws_frame(Slice payload) {
 
 // ---------------------------------------------------------------------------
 // write() — encrypt + send one MTProto packet as a WS binary frame
-// The MTProto packet already has the 4-byte intermediate-format length prefix
-// prepended by RawConnection (via max_prepend_size).
+// Prepends the 4-byte intermediate-format length prefix and optional random
+// padding (for tag=0xdddddddd padded mode), then AES-CTR encrypts the lot.
 // ---------------------------------------------------------------------------
-void Type3WebSocketTransport::write(BufferWriter &&message, bool /*quick_ack*/) {
-  // AES-CTR encrypt in-place
+void Type3WebSocketTransport::write(BufferWriter &&message, bool quick_ack) {
+  // Step 1: Append random padding (0-15 bytes) for padded intermediate mode
+  size_t original_size = message.size();
+  size_t append_size = Random::secure_uint32() % 16;
+  if (append_size > 0) {
+    MutableSlice append_area = message.prepare_append().substr(0, append_size);
+    CHECK(append_area.size() == append_size);
+    Random::secure_bytes(append_area);
+    message.confirm_append(append_size);
+  }
+
+  // Step 2: Prepend 4-byte intermediate-format length
+  // Length = payload + padding (does NOT include the 4-byte prefix itself)
+  MutableSlice prepend_area = message.prepare_prepend();
+  CHECK(prepend_area.size() >= 4);
+  message.confirm_prepend(4);
+
+  // Write the length at the start of the expanded buffer
+  uint32 wire_length = static_cast<uint32>(original_size + append_size);
+  if (quick_ack) {
+    wire_length |= (1u << 31);
+  }
+  as<uint32>(message.as_mutable_slice().begin()) = wire_length;
+
+  // Step 3: AES-CTR encrypt in-place (length + payload + padding)
   auto slice = message.as_mutable_slice();
   output_aes_.encrypt(slice, slice);
 
-  // Wrap in WS binary frame and append to output buffer
+  // Step 4: Wrap in WS binary frame and append to output buffer
   append_ws_frame(message.as_slice());
 }
 
