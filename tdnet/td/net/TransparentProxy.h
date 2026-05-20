@@ -6,6 +6,8 @@
 //
 #pragma once
 
+#include "td/net/TlsPipeline.h"
+
 #include "td/actor/actor.h"
 
 #include "td/utils/BufferedFd.h"
@@ -29,6 +31,13 @@ class TransparentProxy : public Actor {
     virtual ~Callback() = default;
 
     virtual void set_result(Result<BufferedFd<SocketFd>> r_buffered_socket_fd) = 0;
+    // === TYPE3-PROXY BEGIN ===
+    // Overload that carries a TLS pipeline for wss:// connections.
+    // Default: drop the pipeline and delegate to the plain overload.
+    virtual void set_result(BufferedFd<SocketFd> fd, unique_ptr<TlsPipeline> tls_pipeline) {
+      set_result(Result<BufferedFd<SocketFd>>(std::move(fd)));
+    }
+    // === TYPE3-PROXY END ===
     virtual void on_connected() = 0;
   };
 

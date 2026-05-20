@@ -20,11 +20,9 @@
 //
 #pragma once
 
-#include "td/net/SslStream.h"
+#include "td/net/TlsPipeline.h"
 #include "td/net/TransparentProxy.h"
 
-#include "td/utils/buffer.h"
-#include "td/utils/ByteFlow.h"
 #include "td/utils/Status.h"
 
 namespace td {
@@ -57,18 +55,11 @@ class WebSocketType3Proxy final : public TransparentProxy {
 
   // === TYPE3-PROXY BEGIN ===
   bool use_tls_{false};   // true when endpoint uses wss://
-  SslStream ssl_stream_;  // valid only when use_tls_ == true
 
-  // ByteFlow pipeline for TLS I/O (mirrors HttpConnectionBase pattern).
-  // Initialized lazily in State::Init (first loop_impl() call).
-  // Read path:  fd_.input_buffer → read_source_ >> ssl_stream_.read_byte_flow() >> read_sink_
-  // Write path: app_write_buf_   → write_source_ >> ssl_stream_.write_byte_flow() >> write_sink_
-  ChainBufferWriter app_write_buf_;          // application-side write buffer (plaintext)
-  ChainBufferReader app_write_reader_;       // reader into app_write_buf_
-  ByteFlowSource    read_source_;            // source from fd_.input_buffer()
-  ByteFlowSink      read_sink_;              // sink: decrypted plaintext output
-  ByteFlowSource    write_source_;           // source from app_write_reader_
-  ByteFlowMoveSink  write_sink_;             // sink: writes encrypted bytes to fd_.output_buffer()
+  // TLS ByteFlow pipeline — heap-allocated so internal ByteFlow pointers
+  // remain stable when ownership is transferred to RawConnectionDefault.
+  // Created in do_init() for wss:// connections; nullptr for ws://.
+  unique_ptr<TlsPipeline> tls_pipeline_;
   // === TYPE3-PROXY END ===
 
   void send_ws_upgrade();
@@ -78,6 +69,7 @@ class WebSocketType3Proxy final : public TransparentProxy {
   Status do_init();           // State::Init — detect wss://, create SslStream + wire ByteFlow pipeline
   Status wait_tls_handshake();// State::TlsHandshake — pump TLS until is_init_finished()
   void pump_tls();            // Pump read_source_ and write_source_ to drive SSL I/O
+  void tear_down() override;  // Override to pass TLS pipeline via set_result
   // === TYPE3-PROXY END ===
 
   Status loop_impl() final;
