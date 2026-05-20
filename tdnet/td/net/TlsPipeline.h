@@ -65,24 +65,15 @@ class TlsPipeline {
   // The SslStream byte flow chain stays intact; we just rebind the
   // endpoints (source reader + sink writer) which hold raw pointers.
   void rewire(ChainBufferReader *new_ciphertext_input, ChainBufferWriter *new_ciphertext_output) {
-    // ByteFlowSource::set_parent has CHECK(parent_ == nullptr), so we can't
-    // re-chain via operator>>. Instead we replace the source/sink entirely
-    // and re-chain from scratch. The ssl_stream byte flows accept re-wiring
-    // because we create fresh ByteFlowSource/ByteFlowSink objects.
-    //
-    // The old read_source/write_sink are destroyed (move-assigned over).
-    // The ssl_stream byte flows' input_ pointers still reference the old buffers,
-    // but set_parent -> set_input will overwrite them.
-    //
-    // IMPORTANT: ByteFlowSink::set_input has CHECK(buffer_ == nullptr).
-    // ByteFlowBaseCommon::set_input (via ByteFlowBase) also checks.
-    // So we MUST create entirely new sink objects too.
-    read_source = ByteFlowSource(new_ciphertext_input);
-    read_sink = ByteFlowSink();
+    // Replace source/sink endpoints bound to the new socket fd buffers.
+    // ssl_stream byte flows accept re-wiring: ByteFlowBase::set_parent has no CHECK
+    // on re-assignment, ByteFlowSource (new object) has parent_==nullptr so CHECK passes.
+    read_source  = ByteFlowSource(new_ciphertext_input);
+    read_sink    = ByteFlowSink();
     write_source = ByteFlowSource(&app_write_reader);
-    write_sink = ByteFlowMoveSink(new_ciphertext_output);
+    write_sink   = ByteFlowMoveSink(new_ciphertext_output);
 
-    read_source >> ssl_stream.read_byte_flow() >> read_sink;
+    read_source  >> ssl_stream.read_byte_flow()  >> read_sink;
     write_source >> ssl_stream.write_byte_flow() >> write_sink;
   }
 

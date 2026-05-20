@@ -285,6 +285,9 @@ class RawConnectionDefault final : public RawConnection {
     if (size > 0 && stats_callback_) {
       stats_callback_->on_write(size);
     }
+    if (tls_pipeline_) {
+      LOG(DEBUG) << "TLS socket_fd_.flush_write: sent=" << size;
+    }
     return Status::OK();
   }
 
