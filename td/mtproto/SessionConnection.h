@@ -142,23 +142,46 @@ class SessionConnection final
   bool is_main_ = false;
   bool was_moved_ = false;
 
+  // === TYPE3-PROXY BEGIN ===
+  bool is_type3_ws() const {
+    return raw_connection_ != nullptr &&
+           raw_connection_->get_transport_type().type == TransportType::WebSocketType3;
+  }
+  // === TYPE3-PROXY END ===
+
   double rtt() const {
     return max(2.0, raw_connection_->extra().rtt * 1.5 + 1);
   }
 
   double read_disconnect_delay() const {
+    // === TYPE3-PROXY: WSS connections need much longer timeouts ===
+    if (is_type3_ws()) {
+      return 90 + random_delay_;  // generous timeout for WSS
+    }
     return online_flag_ ? rtt() * 3.5 : 135 + random_delay_;
   }
 
   double ping_disconnect_delay() const {
+    // === TYPE3-PROXY: WSS connections need much longer timeouts ===
+    if (is_type3_ws()) {
+      return 90 + random_delay_;
+    }
     return online_flag_ && is_main_ ? rtt() * 2.5 : 135 + random_delay_;
   }
 
   double ping_may_delay() const {
+    // === TYPE3-PROXY: less frequent pings for WSS ===
+    if (is_type3_ws()) {
+      return 30 + random_delay_;
+    }
     return online_flag_ ? rtt() * 0.5 : 30 + random_delay_;
   }
 
   double ping_must_delay() const {
+    // === TYPE3-PROXY: less frequent pings for WSS ===
+    if (is_type3_ws()) {
+      return 60 + random_delay_;
+    }
     return online_flag_ ? rtt() : 60 + random_delay_;
   }
 
