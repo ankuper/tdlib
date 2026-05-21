@@ -99,6 +99,9 @@ class RawConnectionDefault final : public RawConnection {
 
     auto packet_size = packet.size();
     transport_->write(std::move(packet), use_quick_ack);
+    if (tls_pipeline_) {
+      LOG(WARNING) << "T3_CRYPTO: send_crypto wrote " << packet_size << " bytes to transport";
+    }
     return packet_size;
   }
 
@@ -176,13 +179,18 @@ class RawConnectionDefault final : public RawConnection {
 
   Status flush_read(const AuthKey &auth_key, Callback &callback) {
     auto r = socket_fd_.flush_read();
+    size_t socket_read_size = 0;
     if (r.is_ok()) {
-      on_read(r.ok(), callback);
+      socket_read_size = r.ok();
+      on_read(socket_read_size, callback);
     }
     // === TYPE3-PROXY BEGIN ===
     // Pump TLS: decrypt ciphertext from socket → read_sink (plaintext for transport)
     if (tls_pipeline_) {
       tls_pipeline_->pump();
+      if (socket_read_size > 0) {
+        LOG(WARNING) << "T3_READ: socket received " << socket_read_size << " bytes, transport can_read=" << transport_->can_read();
+      }
     }
     // === TYPE3-PROXY END ===
     while (transport_->can_read()) {
@@ -194,6 +202,9 @@ class RawConnectionDefault final : public RawConnection {
         constexpr size_t MAX_PACKET_SIZE = (1 << 22) + 1024;
         if (wait_size > MAX_PACKET_SIZE) {
           return Status::Error(PSLICE() << "Expected packet size is too big: " << wait_size);
+        }
+        if (tls_pipeline_) {
+          LOG(WARNING) << "T3_READ: transport needs " << wait_size << " more bytes";
         }
         break;
       }
@@ -285,8 +296,8 @@ class RawConnectionDefault final : public RawConnection {
     if (size > 0 && stats_callback_) {
       stats_callback_->on_write(size);
     }
-    if (tls_pipeline_) {
-      LOG(DEBUG) << "TLS socket_fd_.flush_write: sent=" << size;
+    if (tls_pipeline_ && size > 0) {
+      LOG(WARNING) << "T3_WRITE: socket sent " << size << " bytes";
     }
     return Status::OK();
   }

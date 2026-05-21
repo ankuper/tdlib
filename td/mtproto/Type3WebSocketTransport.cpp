@@ -282,6 +282,9 @@ Result<size_t> Type3WebSocketTransport::read_next(BufferSlice *message, uint32 *
     return Status::Error("WebSocket connection closed");
   }
 
+  // Ensure the reader sees all data that the network writer has appended
+  input_->sync_with_writer();
+
   while (true) {
     // Try to extract a complete WS frame
     TRY_RESULT(frame_payload, read_ws_frame());
