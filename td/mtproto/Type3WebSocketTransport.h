@@ -43,6 +43,9 @@ class Type3WebSocketTransport final : public IStreamTransport {
   }
   bool use_random_padding() const final { return false; }
 
+  static void set_padding_rejected() { g_padding_ever_rejected_ = true; }
+  static bool is_padding_rejected() { return g_padding_ever_rejected_; }
+
  private:
   int16 dc_id_;
   ProxySecret secret_;
@@ -61,6 +64,17 @@ class Type3WebSocketTransport final : public IStreamTransport {
   // Intermediate-format packet reassembly (with read offset to avoid O(n²) erase)
   string pkt_reassembly_buf_;
   size_t pkt_reassembly_offset_{0};
+
+  // Padding support (Epic 11, Story 11-5)
+  bool padding_active_{false};      // true when server accepted T3_FLAG_PADDING
+  bool padding_rejected_{false};    // true after a connection was silent-closed with flags!=0
+
+  static bool g_padding_ever_rejected_;
+
+  static constexpr uint16 T3_FLAG_PADDING = 0x0001;
+  static constexpr uint8  T3_PADDING_MARKER = 0xFE;
+  static constexpr int    SPLIT_MIN_FRAGMENTS = 2;
+  static constexpr int    SPLIT_MAX_FRAGMENTS = 5;
 
   // Send 64-byte obfuscated-2 init with encrypt-then-restore; derive AES-CTR keys.
   void send_init_sequence();

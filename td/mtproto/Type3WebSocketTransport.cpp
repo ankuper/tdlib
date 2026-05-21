@@ -20,6 +20,8 @@
 namespace td {
 namespace mtproto {
 
+bool Type3WebSocketTransport::g_padding_ever_rejected_ = false;
+
 // ---------------------------------------------------------------------------
 // init() — sends 64-byte obfuscated-2 init, derives AES-CTR keys
 // Matches tdesktop's ConnectionTeleproto3::onWsConnected() flow.
@@ -72,6 +74,19 @@ void Type3WebSocketTransport::send_init_sequence() {
     }
     break;
   }
+
+  // Type3 Session Header at bytes [0:3] (spec/wire-format.md §3)
+  // command_type = 0x01 (MTPROTO_PASSTHROUGH)
+  // version      = 0x01
+  // flags        = T3_FLAG_PADDING (0x0001) or 0x0000 if rejected
+  padding_rejected_ = g_padding_ever_rejected_;
+  header[0] = 0x01;  // command_type
+  header[1] = 0x01;  // version
+  uint16 flags = padding_rejected_ ? 0x0000 : T3_FLAG_PADDING;
+  header[2] = static_cast<char>(flags & 0xFF);         // flags low byte (LE)
+  header[3] = static_cast<char>((flags >> 8) & 0xFF);  // flags high byte (LE)
+  // Assume padding is active until proven otherwise (silent-close fallback)
+  padding_active_ = !padding_rejected_;
 
   // Write plaintext magic at bytes [56..60): 0xDDDDDDDD (intermediate padding mode)
   as<uint32>(header + 56) = 0xdddddddd;
@@ -270,8 +285,30 @@ void Type3WebSocketTransport::write(BufferWriter &&message, bool quick_ack) {
   auto slice = message.as_mutable_slice();
   output_aes_.encrypt(slice, slice);
 
-  // Step 4: Wrap in WS binary frame and append to output buffer
-  append_ws_frame(message.as_slice());
+  // Step 4: Frame splitting or single frame
+  auto encrypted_slice = message.as_slice();
+  if (padding_active_ && encrypted_slice.size() > 0) {
+    // Split into 2-5 random fragments
+    int n_frags = SPLIT_MIN_FRAGMENTS + (Random::secure_uint32() % (SPLIT_MAX_FRAGMENTS - SPLIT_MIN_FRAGMENTS + 1));
+    size_t remaining = encrypted_slice.size();
+    size_t offset = 0;
+    for (int i = 0; i < n_frags && remaining > 0; i++) {
+      size_t frag_size;
+      if (i == n_frags - 1 || remaining <= static_cast<size_t>(n_frags - i)) {
+        // Last fragment or not enough bytes left: take everything remaining
+        frag_size = remaining;
+      } else {
+        // Random split: leave at least 1 byte for each remaining fragment
+        size_t max_frag = remaining - static_cast<size_t>(n_frags - i - 1);
+        frag_size = 1 + (Random::secure_uint32() % static_cast<uint32>(max_frag));
+      }
+      append_ws_frame(encrypted_slice.substr(offset, frag_size));
+      offset += frag_size;
+      remaining -= frag_size;
+    }
+  } else {
+    append_ws_frame(encrypted_slice);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +333,13 @@ Result<size_t> Type3WebSocketTransport::read_next(BufferSlice *message, uint32 *
     // AES-CTR decrypt the payload in-place
     auto mslice = frame_payload.as_mutable_slice();
     input_aes_.encrypt(mslice, mslice);  // AesCtrState::encrypt is CTR (same for enc/dec)
+
+    // Padding frame detection: first decrypted byte == 0xFE → discard
+    if (padding_active_ && frame_payload.size() > 0 &&
+        static_cast<uint8>(frame_payload.as_slice()[0]) == T3_PADDING_MARKER) {
+      // Padding frame: CTR counter already advanced, just skip
+      continue;
+    }
 
     // Accumulate in packet reassembly buffer
     pkt_reassembly_buf_.append(frame_payload.as_slice().data(), frame_payload.size());
