@@ -897,7 +897,12 @@ void SessionConnection::force_ack() {
 void SessionConnection::send_ack(MessageId message_id) {
   VLOG(mtproto) << "Send ack for " << message_id;
   if (to_ack_message_ids_.empty()) {
-    send_before(Time::now_cached() + ACK_DELAY);
+    // === TYPE3-PROXY: immediate ACKs for WSS to keep DC responsive ===
+    if (is_type3_ws()) {
+      send_before(Time::now_cached() + 0.5);  // 0.5s instead of 30s
+    } else {
+      send_before(Time::now_cached() + ACK_DELAY);
+    }
   }
   // an easiest way to eliminate duplicated acknowledgements for gzipped packets
   if (to_ack_message_ids_.empty() || to_ack_message_ids_.back() != message_id) {

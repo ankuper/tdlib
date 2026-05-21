@@ -158,6 +158,7 @@ class Session final
     CancellationTokenSource cancellation_token_source_;
     unique_ptr<mtproto::SessionConnection> connection_;
     bool ask_info_ = false;
+    bool is_ws_type3_ = false;  // === TYPE3-PROXY: preserve WS connection across handshake ===
     double wakeup_at_ = 0;
     double created_at_ = 0;
   };
