@@ -15,14 +15,23 @@ namespace mtproto {
 
 struct TransportType {
   // === TYPE3-PROXY BEGIN ===
-  enum Type { Tcp, ObfuscatedTcp, Http, WebSocketType3 } type = Tcp;
+  enum Type { Tcp, ObfuscatedTcp, Http, WebSocketType3, HttpStreamType3 } type = Tcp;
   // === TYPE3-PROXY END ===
   int16 dc_id{0};
   ProxySecret secret;
+  // === TYPE3-PROXY BEGIN ===
+  string host;  // HTTP stream mode: Host header value
+  string path;  // HTTP stream mode: POST target path
+  // === TYPE3-PROXY END ===
 
   TransportType() = default;
   TransportType(Type type, int16 dc_id, ProxySecret secret) : type(type), dc_id(dc_id), secret(std::move(secret)) {
   }
+  // === TYPE3-PROXY BEGIN ===
+  TransportType(Type type, int16 dc_id, ProxySecret secret, string host, string path)
+      : type(type), dc_id(dc_id), secret(std::move(secret)), host(std::move(host)), path(std::move(path)) {
+  }
+  // === TYPE3-PROXY END ===
 };
 
 }  // namespace mtproto
