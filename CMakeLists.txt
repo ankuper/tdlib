@@ -299,8 +299,7 @@ set(TD_MTPROTO_SOURCE
   td/mtproto/TcpTransport.cpp
   td/mtproto/TlsInit.cpp
   # === TYPE3-PROXY BEGIN ===
-  td/mtproto/Type3WebSocketTransport.cpp
-  td/mtproto/Type3HttpStreamTransport.cpp
+  td/mtproto/Type3Transport.cpp
   # === TYPE3-PROXY END ===
   td/mtproto/TlsReaderByteFlow.cpp
   td/mtproto/Transport.cpp
@@ -332,8 +331,7 @@ set(TD_MTPROTO_SOURCE
   td/mtproto/TcpTransport.h
   td/mtproto/TlsInit.h
   # === TYPE3-PROXY BEGIN ===
-  td/mtproto/Type3WebSocketTransport.h
-  td/mtproto/Type3HttpStreamTransport.h
+  td/mtproto/Type3Transport.h
   # === TYPE3-PROXY END ===
   td/mtproto/TlsReaderByteFlow.h
   td/mtproto/Transport.h
@@ -1326,8 +1324,9 @@ if (NOT CMAKE_CROSSCOMPILING)
   add_dependencies(tdmtproto tl_generate_mtproto)
 endif()
 # === TYPE3-PROXY BEGIN ===
-# libteleproto3 linkage for Type3WebSocketTransport.
+# libteleproto3 linkage for Type3Transport.
 # Pass -DTELEPROTO3_LIB_DIR=<path> and -DTELEPROTO3_INCLUDE_DIR=<path> at configure time.
+# TELEPROTO3_SRC_DIR points to lib/src/ for internal headers (t3_client_crypto.h, t3_client_ws.h).
 # T3_STATIC_LIB suppresses Windows DLL decoration on all platforms (safe no-op on Linux/macOS).
 if (TELEPROTO3_LIB_DIR)
   find_library(TELEPROTO3_LIB
@@ -1339,11 +1338,14 @@ if (TELEPROTO3_LIB_DIR)
   if (TELEPROTO3_INCLUDE_DIR)
     target_include_directories(tdmtproto SYSTEM PRIVATE "${TELEPROTO3_INCLUDE_DIR}")
   endif()
+  if (TELEPROTO3_SRC_DIR)
+    target_include_directories(tdmtproto SYSTEM PRIVATE "${TELEPROTO3_SRC_DIR}")
+  endif()
   target_link_libraries(tdmtproto PRIVATE "${TELEPROTO3_LIB}")
   target_compile_definitions(tdmtproto PRIVATE T3_STATIC_LIB)
   message(STATUS "TYPE3-PROXY: linking libteleproto3 from ${TELEPROTO3_LIB}")
 else()
-  message(STATUS "TYPE3-PROXY: TELEPROTO3_LIB_DIR not set — Type3WebSocketTransport will link without libteleproto3")
+  message(STATUS "TYPE3-PROXY: TELEPROTO3_LIB_DIR not set — Type3Transport will link without libteleproto3")
 endif()
 # === TYPE3-PROXY END ===
 
