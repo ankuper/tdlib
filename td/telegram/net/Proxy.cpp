@@ -62,11 +62,13 @@ Result<Proxy> Proxy::create_proxy(string server, int port, const td_api::ProxyTy
       if (type->endpoint_.size() > 2048) {
         return Status::Error(400, "Teleproto3 proxy endpoint URL is too long");
       }
-      if (type->endpoint_.substr(0, 6) != "wss://" && type->endpoint_.substr(0, 5) != "ws://") {
-        return Status::Error(400, "Teleproto3 proxy endpoint must use wss:// or ws:// scheme");
+      // Accept wss:// for WebSocket mode or https:// for HTTP stream mode
+      if (type->endpoint_.substr(0, 6) != "wss://" && type->endpoint_.substr(0, 5) != "ws://" &&
+          type->endpoint_.substr(0, 8) != "https://" && type->endpoint_.substr(0, 7) != "http://") {
+        return Status::Error(400, "Teleproto3 proxy endpoint must use wss://, ws://, https://, or http:// scheme");
       }
-      if (type->endpoint_.substr(0, 5) == "ws://") {
-        LOG(WARNING) << "Teleproto3 proxy endpoint uses unencrypted ws:// scheme — " 
+      if (type->endpoint_.substr(0, 5) == "ws://" || type->endpoint_.substr(0, 7) == "http://") {
+        LOG(WARNING) << "Teleproto3 proxy endpoint uses unencrypted scheme — " 
                      << "traffic will not be TLS-protected";
       }
       TRY_RESULT(secret, mtproto::ProxySecret::from_link(type->secret_));

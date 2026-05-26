@@ -627,6 +627,23 @@ Result<mtproto::TransportType> ConnectionCreator::get_transport_type(const Proxy
   }
   // === TYPE3-PROXY BEGIN ===
   if (proxy.use_teleproto3_proxy()) {
+    auto ep = proxy.endpoint().str();
+    bool use_http_stream = (ep.substr(0, 8) == "https://" || ep.substr(0, 7) == "http://");
+    if (use_http_stream) {
+      // Parse host and path from https://host/path or http://host/path
+      string host, path;
+      size_t scheme_end = ep.find("://");
+      auto rest = ep.substr(scheme_end + 3);
+      auto slash_pos = rest.find('/');
+      if (slash_pos != string::npos) {
+        host = rest.substr(0, slash_pos);
+        path = rest.substr(slash_pos + 1);
+      } else {
+        host = rest;
+      }
+      return mtproto::TransportType{mtproto::TransportType::HttpStreamType3, raw_dc_id, proxy.secret(),
+                                     std::move(host), std::move(path)};
+    }
     return mtproto::TransportType{mtproto::TransportType::WebSocketType3, raw_dc_id, proxy.secret()};
   }
   // === TYPE3-PROXY END ===
