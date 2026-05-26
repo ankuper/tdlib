@@ -10,6 +10,7 @@
 #include "td/mtproto/TcpTransport.h"
 // === TYPE3-PROXY BEGIN ===
 #include "td/mtproto/Type3WebSocketTransport.h"
+#include "td/mtproto/Type3HttpStreamTransport.h"
 // === TYPE3-PROXY END ===
 
 namespace td {
@@ -26,6 +27,9 @@ unique_ptr<IStreamTransport> create_transport(TransportType type) {
     // === TYPE3-PROXY BEGIN ===
     case TransportType::WebSocketType3:
       return td::make_unique<Type3WebSocketTransport>(type.dc_id, std::move(type.secret));
+    case TransportType::HttpStreamType3:
+      return td::make_unique<Type3HttpStreamTransport>(type.dc_id, std::move(type.secret),
+                                                       std::move(type.host), std::move(type.path));
     // === TYPE3-PROXY END ===
   }
   UNREACHABLE();
