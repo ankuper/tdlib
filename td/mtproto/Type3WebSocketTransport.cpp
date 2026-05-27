@@ -109,7 +109,7 @@ void Type3WebSocketTransport::send_init_sequence() {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)proxy_secret[i]);
       hex += buf;
     }
-    VLOG(dc) << "T3_DEBUG: proxy_secret(" << proxy_secret.size() << ")=" << hex;
+    LOG(DEBUG) << "T3_DEBUG: proxy_secret(" << proxy_secret.size() << ")=" << hex;
   }
 
   // send_key = SHA256(header[8..40] || proxy_secret[0..16])
@@ -159,9 +159,9 @@ void Type3WebSocketTransport::send_init_sequence() {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)iv_slice[i]);
       iv_hex += buf;
     }
-    VLOG(dc) << "T3_DEBUG: plaintext_header=" << hdr_hex;
-    VLOG(dc) << "T3_DEBUG: send_key=" << key_hex;
-    VLOG(dc) << "T3_DEBUG: send_iv=" << iv_hex;
+    LOG(DEBUG) << "T3_DEBUG: plaintext_header=" << hdr_hex;
+    LOG(DEBUG) << "T3_DEBUG: send_key=" << key_hex;
+    LOG(DEBUG) << "T3_DEBUG: send_iv=" << iv_hex;
   }
 
   // Initialise AES-CTR states (continuous across all WS frames — no per-frame reset)
@@ -189,14 +189,14 @@ void Type3WebSocketTransport::send_init_sequence() {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)header[i]);
       wire_hex += buf;
     }
-    VLOG(dc) << "T3_DEBUG: wire_header=" << wire_hex;
+    LOG(DEBUG) << "T3_DEBUG: wire_header=" << wire_hex;
     // Dump encrypted bytes 56-63 separately
     string enc_hex;
     for (size_t i = 56; i < 64; i++) {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)header[i]);
       enc_hex += buf;
     }
-    VLOG(dc) << "T3_DEBUG: encrypted_tag_bytes=" << enc_hex;
+    LOG(DEBUG) << "T3_DEBUG: encrypted_tag_bytes=" << enc_hex;
   }
 
   // Send the 64-byte init as a single WS binary frame
