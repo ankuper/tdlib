@@ -196,6 +196,9 @@ void Type3HttpStreamTransport::write(BufferWriter &&message, bool quick_ack) {
         chunk_size = remaining;
       } else {
         size_t max_chunk = remaining - static_cast<size_t>(n_chunks - i - 1);
+        if (max_chunk > UINT32_MAX) {
+          max_chunk = UINT32_MAX;
+        }
         chunk_size = 1 + (Random::secure_uint32() % static_cast<uint32>(max_chunk));
       }
       append_http_chunk(encrypted_slice.substr(offset, chunk_size));
@@ -213,10 +216,10 @@ void Type3HttpStreamTransport::write(BufferWriter &&message, bool quick_ack) {
 // ---------------------------------------------------------------------------
 bool Type3HttpStreamTransport::try_parse_http_response() {
   input_->sync_with_writer();
-  VLOG(dc) << "T3_HTTP_PARSE: input size=" << input_->size() << " headers_parsed=" << http_headers_parsed_
+  LOG(DEBUG) << "T3_HTTP_PARSE: input size=" << input_->size() << " headers_parsed=" << http_headers_parsed_
                << " header_buf_size=" << http_header_buf_.size();
-  if (input_->size() > 0 && http_header_buf_.empty()) {
-    // Dump first 64 bytes as hex for diagnosis
+  if (!LOG_IS_STRIPPED(DEBUG) && input_->size() > 0 && http_header_buf_.empty()) {
+    // Dump first 256 bytes as hex for diagnosis (only when debug logging enabled)
     size_t dump_len = std::min(input_->size(), static_cast<size_t>(256));
     auto slice = input_->prepare_read();
     size_t actual = std::min(dump_len, slice.size());
@@ -228,7 +231,7 @@ bool Type3HttpStreamTransport::try_parse_http_response() {
       hex += buf;
       ascii += (slice[i] >= 32 && slice[i] < 127) ? slice[i] : '.';
     }
-    VLOG(dc) << "T3_HTTP_DUMP: actual=" << actual << "/" << dump_len << " ascii=[" << ascii << "]";
+    LOG(DEBUG) << "T3_HTTP_DUMP: actual=" << actual << "/" << dump_len << " ascii=[" << ascii << "]";
   }
 
   while (input_->size() > 0) {
@@ -259,7 +262,7 @@ bool Type3HttpStreamTransport::try_parse_http_response() {
   // Post-loop diagnostic
   if (!http_headers_parsed_ && !http_header_buf_.empty()) {
     auto pos = http_header_buf_.find("\r\n\r\n");
-    VLOG(dc) << "T3_HTTP_POST: consumed " << http_header_buf_.size() << " bytes, \\r\\n\\r\\n at pos=" 
+    LOG(DEBUG) << "T3_HTTP_POST: consumed " << http_header_buf_.size() << " bytes, \\r\\n\\r\\n at pos=" 
                  << (pos == string::npos ? -1 : static_cast<int>(pos))
                  << " last4=[" << (http_header_buf_.size() >= 4 ? http_header_buf_.substr(http_header_buf_.size() - 4) : "<short>") << "]";
   }
@@ -332,8 +335,8 @@ Result<BufferSlice> Type3HttpStreamTransport::read_http_chunk() {
             break;
           }
 
-          // Safety: chunk size line shouldn't exceed 32 bytes
-          if (chunk_size_buf_.size() > 300) {
+          // Safety: valid chunk size line is ~20 bytes max (hex digits + extension + CRLF)
+          if (chunk_size_buf_.size() > 32) {
             return Status::Error("Type3HttpStream: chunk size line too long");
           }
         }
@@ -419,6 +422,11 @@ Result<size_t> Type3HttpStreamTransport::read_next(BufferSlice *message, uint32 
 
     // Accumulate in packet reassembly buffer
     pkt_reassembly_buf_.append(chunk_payload.as_slice().data(), chunk_payload.size());
+
+    // Guard against unbounded reassembly buffer growth (8 MB cap)
+    if (pkt_reassembly_buf_.size() > (1u << 23)) {
+      return Status::Error("Type3HttpStream: reassembly buffer overflow");
+    }
 
     // Try to extract one intermediate-format packet (4-byte LE length + payload)
     size_t avail = pkt_reassembly_buf_.size() - pkt_reassembly_offset_;
