@@ -33,6 +33,7 @@ set(TDNET_SOURCE
   td/net/Wget.cpp
   # === TYPE3-PROXY BEGIN ===
   td/net/WebSocketType3Proxy.cpp
+  td/net/HttpStreamType3Proxy.cpp
   # === TYPE3-PROXY END ===
 
   td/net/GetHostByNameActor.h
@@ -55,6 +56,7 @@ set(TDNET_SOURCE
   td/net/Wget.h
   # === TYPE3-PROXY BEGIN ===
   td/net/WebSocketType3Proxy.h
+  td/net/HttpStreamType3Proxy.h
   # === TYPE3-PROXY END ===
 )
 
