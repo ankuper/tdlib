@@ -187,9 +187,15 @@ class RawConnectionDefault final : public RawConnection {
     // === TYPE3-PROXY BEGIN ===
     // Pump TLS: decrypt ciphertext from socket → read_sink (plaintext for transport)
     if (tls_pipeline_) {
-      tls_pipeline_->pump();
+      // Pump multiple times — SslStream may not process all TLS records in one wakeup
+      for (int i = 0; i < 5; i++) {
+        auto before = tls_pipeline_->plaintext_input()->size();
+        tls_pipeline_->pump();
+        auto after = tls_pipeline_->plaintext_input()->size();
+        if (after == before && i > 0) break;  // no more data produced
+      }
       if (socket_read_size > 0) {
-        LOG(WARNING) << "T3_READ: socket received " << socket_read_size << " bytes, transport can_read=" << transport_->can_read();
+        LOG(WARNING) << "T3_READ: socket received " << socket_read_size << " bytes, plaintext_avail=" << tls_pipeline_->plaintext_input()->size();
       }
     }
     // === TYPE3-PROXY END ===
