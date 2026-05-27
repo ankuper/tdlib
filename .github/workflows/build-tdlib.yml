@@ -1,12 +1,14 @@
 # === TYPE3-PROXY BEGIN ===
 # .github/workflows/build-tdlib.yml
-# Story 10-5: GitHub CI — TDLib Build + Release Artifacts (AC #1, #3, #5, #6, #8)
+# CI: TDLib Build + Release Artifacts
 #
-# Jobs:
-#   identity-audit — AR-G5 gate (parallel with build)
-#   build          — Docker build + GHCR push
-#   smoke-test     — verify proxyTypeTeleproto3 compiles and links (depends on build)
-#   release-artifacts — GitHub Release + tarball (tag-triggered, depends on build+smoke-test)
+# Matrix build:
+#   - linux-amd64  (ubuntu-latest, Docker image + native libs)
+#   - linux-arm64  (ubuntu-24.04-arm, native build)
+#   - macos-arm64  (macos-14, Apple Silicon native)
+#
+# On every push: upload-artifact for all platforms
+# On tag push:   GitHub Release with all platform tarballs
 # === TYPE3-PROXY END ===
 
 name: Build TDLib with Type3 Support
@@ -17,6 +19,9 @@ on:
       - teleproto3-support
     tags:
       - 'tdlib-type3-v*'
+  pull_request:
+    branches:
+      - teleproto3-support
   workflow_dispatch:
     inputs:
       no_cache:
@@ -25,68 +30,54 @@ on:
         type: boolean
         default: false
 
-# MANDATORY permissions stanza (Story 4-2 code review F → §13 style-guide)
 permissions:
-  contents: write   # needed for GitHub Releases
-  packages: write   # needed for GHCR push
+  contents: write
+  packages: write
+
+env:
+  TELEPROTO3_REF: main
 
 jobs:
-  # ── Job 1: AR-G5 Identity Audit (parallel with build) ─────────────────────
+  # ── Identity Audit ─────────────────────────────────────────────────────────
   identity-audit:
     name: AR-G5 Identity Audit
     runs-on: ubuntu-latest
-    # continue-on-error: IDENTITY_TOKENS secret must be populated in repo settings.
-    # Until then, this job is advisory to avoid blocking Docker build + release.
     continue-on-error: true
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # full history needed for identity-audit.sh git log range
-
+          fetch-depth: 0
       - name: Restore identity tokens
         run: |
           mkdir -p _bmad-output/security
           echo "${{ secrets.IDENTITY_TOKENS }}" | base64 -d > _bmad-output/security/identity-tokens.list
-        env:
-          IDENTITY_TOKENS: ${{ secrets.IDENTITY_TOKENS }}
-
       - name: Run AR-G5 identity audit
         run: |
           BASE_SHA="${{ github.event.before }}"
           HEAD_SHA="${{ github.sha }}"
-          # For tag pushes, compare against the previous commit
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             BASE_SHA="$(git rev-parse HEAD^)"
             HEAD_SHA="$GITHUB_SHA"
           fi
           IDENTITY_AUDIT_TOKEN_LIST=_bmad-output/security/identity-tokens.list \
-            BASE_SHA="$BASE_SHA" \
-            HEAD_SHA="$HEAD_SHA" \
+            BASE_SHA="$BASE_SHA" HEAD_SHA="$HEAD_SHA" \
             bash ci/identity-audit.sh
 
-  # ── Job 2: Build Docker Image + Push to GHCR ──────────────────────────────
-  build:
-    name: Build TDLib Docker Image
+  # ── Docker Image (linux/amd64) — GHCR push ────────────────────────────────
+  docker-image:
+    name: Docker Image (linux/amd64)
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.meta.outputs.version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # MUST precede build-push-action (Story 4-2 review F1 patch)
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
+      - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -94,11 +85,8 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            # CRITICAL: use explicit ref condition — teleproto3-support is NOT the default branch
-            # so `is_default_branch` evaluates to false and :latest would never be pushed
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/teleproto3-support' }}
-
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -111,107 +99,165 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/ankuper/tdlib-type3:buildcache,mode=max
           no-cache: ${{ inputs.no_cache == true }}
 
-  # ── Job 3: Smoke Test (AC #5) ──────────────────────────────────────────────
-  smoke-test:
-    name: Smoke Test — proxyTypeTeleproto3
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  # ── Native builds (matrix) ────────────────────────────────────────────────
+  build-native:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            runner: ubuntu-latest
+            os: linux
+            arch: amd64
+            artifact: tdlib-type3-linux-amd64
+          - name: macos-x64
+            runner: macos-13
+            os: macos
+            arch: x64
+            artifact: tdlib-type3-macos-x64
+          - name: macos-arm64
+            runner: macos-14
+            os: macos
+            arch: arm64
+            artifact: tdlib-type3-macos-arm64
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Install dependencies ───────────────────────────────────────────
+      - name: Install deps (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            cmake g++ make git zlib1g-dev libssl-dev gperf
+
+      - name: Install deps (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          brew install openssl@3 zlib gperf cmake
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      # ── Build libteleproto3 from source ────────────────────────────────
+      - name: Build libteleproto3
+        run: |
+          git clone --depth 1 --branch "$TELEPROTO3_REF" \
+            https://github.com/ankuper/teleproto3.git /tmp/teleproto3
+          cmake -S /tmp/teleproto3/lib -B /tmp/teleproto3/lib/build \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/teleproto3/lib/build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          echo "TELEPROTO3_LIB_DIR=/tmp/teleproto3/lib/build" >> "$GITHUB_ENV"
+          echo "TELEPROTO3_INCLUDE_DIR=/tmp/teleproto3/lib/include" >> "$GITHUB_ENV"
+
+      # ── Build TDLib ────────────────────────────────────────────────────
+      - name: Configure TDLib
+        run: |
+          mkdir -p build
+          CMAKE_EXTRA=""
+          if [ "${{ matrix.os }}" = "macos" ]; then
+            CMAKE_EXTRA="-DOPENSSL_ROOT_DIR=$OPENSSL_ROOT_DIR"
+          fi
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install \
+            -DTELEPROTO3_LIB_DIR="$TELEPROTO3_LIB_DIR" \
+            -DTELEPROTO3_INCLUDE_DIR="$TELEPROTO3_INCLUDE_DIR" \
+            -DT3_STATIC_LIB=ON \
+            $CMAKE_EXTRA
+
+      - name: Build TDLib
+        run: cmake --build build --target install -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+      # ── Package artifacts ──────────────────────────────────────────────
+      - name: Package libraries
+        run: |
+          DIST="${{ github.workspace }}/dist"
+          mkdir -p "$DIST/lib" "$DIST/include"
+
+          # Libraries (shared + static)
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            cp -P install/lib/libtdjson.so* "$DIST/lib/" 2>/dev/null || true
+          else
+            cp -P install/lib/libtdjson.dylib* "$DIST/lib/" 2>/dev/null || true
+          fi
+          cp install/lib/*.a "$DIST/lib/" 2>/dev/null || true
+
+          # libteleproto3
+          cp "$TELEPROTO3_LIB_DIR/libteleproto3.a" "$DIST/lib/" 2>/dev/null || true
+          cp "$TELEPROTO3_INCLUDE_DIR/t3.h" "$DIST/include/" 2>/dev/null || true
+
+          # Headers
+          cp -r install/include/td "$DIST/include/" 2>/dev/null || true
+
+          echo "=== Artifact contents ==="
+          find "$DIST" -type f | sort
+          echo "=== Library sizes ==="
+          ls -lh "$DIST/lib/"
+
+      - name: Create tarball
+        run: |
+          cd ${{ github.workspace }}/dist
+          tar -czf "${{ github.workspace }}/${{ matrix.artifact }}.tar.gz" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+          retention-days: 30
+
+  # ── Smoke Test ─────────────────────────────────────────────────────────────
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: docker-image
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull just-built image
-        run: docker pull ghcr.io/ankuper/tdlib-type3:latest
-
-      # === TYPE3-PROXY BEGIN ===
-      - name: Run Type3 smoke test inside container
+      - name: Pull and test
         run: |
-          # Create a container from the just-built image
+          docker pull ghcr.io/ankuper/tdlib-type3:latest
           CONTAINER=$(docker create ghcr.io/ankuper/tdlib-type3:latest bash -c "
             set -euo pipefail
             apt-get update -qq && apt-get install -y -qq --no-install-recommends g++ libssl-dev > /dev/null 2>&1
-            g++ -std=c++17 \
-                -I/usr/local/include \
-                /tmp/test_type3_smoke.cpp \
-                -L/usr/local/lib \
-                -Wl,-rpath,/usr/local/lib \
-                -ltdjson \
-                -o /tmp/test_type3_smoke
+            g++ -std=c++17 -I/usr/local/include /tmp/test_type3_smoke.cpp \
+                -L/usr/local/lib -Wl,-rpath,/usr/local/lib -ltdjson -o /tmp/test_type3_smoke
             echo '--- ldd check ---'
             ldd /tmp/test_type3_smoke
             echo '--- running test ---'
             LD_LIBRARY_PATH=/usr/local/lib /tmp/test_type3_smoke
           ")
-          # Copy smoke test source into container (avoids heredoc quoting issues)
           docker cp tests/test_type3_smoke.cpp "${CONTAINER}:/tmp/test_type3_smoke.cpp"
-          # Start and wait for result
           docker start -a "${CONTAINER}"
-          EXIT_CODE=$?
           docker rm "${CONTAINER}" || true
-          exit "${EXIT_CODE}"
-      # === TYPE3-PROXY END ===
 
-
-  # ── Job 4: GitHub Release Artifacts (tag-triggered only) ──────────────────
-  release-artifacts:
-    name: Create GitHub Release
+  # ── GitHub Release (tag-triggered) ─────────────────────────────────────────
+  release:
+    name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, smoke-test]
+    needs: [build-native, smoke-test]
     if: startsWith(github.ref, 'refs/tags/tdlib-type3-v')
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          path: release-artifacts
 
-      - name: Extract tag name
+      - name: List artifacts
+        run: find release-artifacts -type f | sort
+
+      - name: Extract tag
         id: tag
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-      - name: Pull built image
-        run: docker pull "ghcr.io/ankuper/tdlib-type3:${{ steps.tag.outputs.tag }}"
-
-      - name: Extract artifacts from Docker image
-        run: |
-          # Create a temporary container to extract files
-          CONTAINER=$(docker create "ghcr.io/ankuper/tdlib-type3:${{ steps.tag.outputs.tag }}")
-          mkdir -p release-artifacts/lib release-artifacts/include
-
-          # Extract libraries
-          docker cp "${CONTAINER}:/usr/local/lib/." release-artifacts/lib/
-
-          # Extract headers
-          docker cp "${CONTAINER}:/usr/local/include/td/." release-artifacts/include/td/
-          docker cp "${CONTAINER}:/usr/local/include/t3.h" release-artifacts/include/t3.h || true
-
-          docker rm "${CONTAINER}"
-
-          # Package as tarball
-          tar -czf "tdlib-type3-${{ steps.tag.outputs.tag }}-linux-amd64.tar.gz" \
-              -C release-artifacts .
-
-          echo "Artifact contents:"
-          tar -tzf "tdlib-type3-${{ steps.tag.outputs.tag }}-linux-amd64.tar.gz" | head -30
-
-      - name: Get TDLib upstream commit SHA
-        id: upstream
-        run: |
-          UPSTREAM_SHA=$(git rev-parse HEAD)
-          echo "sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
-
-      # softprops/action-gh-release pinned @v2 (Story 10-5 review patch E6)
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -221,37 +267,39 @@ jobs:
             ## TDLib with Type3 (Teleproto3) Proxy Support
 
             **Tag:** `${{ steps.tag.outputs.tag }}`
-            **TDLib upstream commit:** `${{ steps.upstream.outputs.sha }}`
-            **Platform:** `linux/amd64`
-            **Docker image:** `ghcr.io/ankuper/tdlib-type3:${{ steps.tag.outputs.tag }}`
+            **Commit:** `${{ github.sha }}`
 
-            ### What's included in the tarball
+            ### Platform Artifacts
+
+            | File | Platform | Arch |
+            |------|----------|------|
+            | `tdlib-type3-linux-amd64.tar.gz` | Linux | x86_64 |
+            | `tdlib-type3-linux-arm64.tar.gz` | Linux | aarch64 |
+            | `tdlib-type3-macos-arm64.tar.gz` | macOS | Apple Silicon |
+
+            ### Contents (each tarball)
 
             | Path | Description |
             |------|-------------|
-            | `lib/libtdjson.so*` | TDLib shared library (go-tdlib CGO entry point) |
+            | `lib/libtdjson.so*` / `lib/libtdjson.dylib` | TDLib shared library |
             | `lib/libtdclient.a` | TDLib client static library |
             | `lib/libtdcore.a` | TDLib core static library |
-            | `lib/libtdapi.a` | TDLib API static library |
+            | `lib/libtdmtproto.a` | TDLib MTProto static library |
             | `lib/libteleproto3.a` | Type3 protocol static library |
-            | `include/td/telegram/td_api.h` | TDLib API headers (includes `proxyTypeTeleproto3`) |
+            | `include/td/` | TDLib headers |
             | `include/t3.h` | Type3 protocol header |
 
-            ### Drop-in replacement for dikidi-tdlib:latest
-
-            Change your Dockerfile base image:
-            ```dockerfile
-            - FROM dikidi-tdlib:latest
-            + FROM ghcr.io/ankuper/tdlib-type3:latest
+            ### Docker Image (linux/amd64)
+            ```
+            docker pull ghcr.io/ankuper/tdlib-type3:${{ steps.tag.outputs.tag }}
             ```
 
-            Same library paths, same header layout. Adds `proxyTypeTeleproto3` Type3 support.
-
-            ### Dependencies
-            - Stories 10-1 through 10-4 (TDLib Type3 C++ integration)
-            - Story 1-12 (Linux libteleproto3 build)
-            - Story 7-11 (AR-G5 identity-audit gate)
+            ### Transport Modes
+            - `wss://` endpoint → WebSocket (WS upgrade)
+            - `https://` endpoint → HTTP stream (POST+chunked, ТСПУ-safe)
           files: |
-            tdlib-type3-${{ steps.tag.outputs.tag }}-linux-amd64.tar.gz
+            release-artifacts/tdlib-type3-linux-amd64/tdlib-type3-linux-amd64.tar.gz
+            release-artifacts/tdlib-type3-linux-arm64/tdlib-type3-linux-arm64.tar.gz
+            release-artifacts/tdlib-type3-macos-arm64/tdlib-type3-macos-arm64.tar.gz
           draft: false
           prerelease: false

@@ -20,6 +20,8 @@
 #include "td/utils/Status.h"
 #include "td/utils/UInt.h"
 
+#include <atomic>
+
 namespace td {
 namespace mtproto {
 
@@ -43,8 +45,8 @@ class Type3WebSocketTransport final : public IStreamTransport {
   }
   bool use_random_padding() const final { return false; }
 
-  static void set_padding_rejected() { g_padding_ever_rejected_ = true; }
-  static bool is_padding_rejected() { return g_padding_ever_rejected_; }
+  static void set_padding_rejected() { g_padding_ever_rejected_.store(true, std::memory_order_relaxed); }
+  static bool is_padding_rejected() { return g_padding_ever_rejected_.load(std::memory_order_relaxed); }
 
  private:
   int16 dc_id_;
@@ -69,7 +71,9 @@ class Type3WebSocketTransport final : public IStreamTransport {
   bool padding_active_{false};      // true when server accepted T3_FLAG_PADDING
   bool padding_rejected_{false};    // true after a connection was silent-closed with flags!=0
 
-  static bool g_padding_ever_rejected_;
+  // std::atomic<bool>: g_padding_ever_rejected_ may be written by set_padding_rejected()
+  // on a different thread than send_init_sequence() reads it. Plain bool is data-race UB (C++11).
+  static std::atomic<bool> g_padding_ever_rejected_;
 
   static constexpr uint16 T3_FLAG_PADDING = 0x0001;
   static constexpr uint8  T3_PADDING_MARKER = 0xFE;
