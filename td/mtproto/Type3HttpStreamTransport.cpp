@@ -213,7 +213,7 @@ void Type3HttpStreamTransport::write(BufferWriter &&message, bool quick_ack) {
 // ---------------------------------------------------------------------------
 bool Type3HttpStreamTransport::try_parse_http_response() {
   input_->sync_with_writer();
-  LOG(WARNING) << "T3_HTTP_PARSE: input size=" << input_->size() << " headers_parsed=" << http_headers_parsed_
+  VLOG(dc) << "T3_HTTP_PARSE: input size=" << input_->size() << " headers_parsed=" << http_headers_parsed_
                << " header_buf_size=" << http_header_buf_.size();
   if (input_->size() > 0 && http_header_buf_.empty()) {
     // Dump first 64 bytes as hex for diagnosis
@@ -228,7 +228,7 @@ bool Type3HttpStreamTransport::try_parse_http_response() {
       hex += buf;
       ascii += (slice[i] >= 32 && slice[i] < 127) ? slice[i] : '.';
     }
-    LOG(WARNING) << "T3_HTTP_DUMP: actual=" << actual << "/" << dump_len << " ascii=[" << ascii << "]";
+    VLOG(dc) << "T3_HTTP_DUMP: actual=" << actual << "/" << dump_len << " ascii=[" << ascii << "]";
   }
 
   while (input_->size() > 0) {
@@ -259,7 +259,7 @@ bool Type3HttpStreamTransport::try_parse_http_response() {
   // Post-loop diagnostic
   if (!http_headers_parsed_ && !http_header_buf_.empty()) {
     auto pos = http_header_buf_.find("\r\n\r\n");
-    LOG(WARNING) << "T3_HTTP_POST: consumed " << http_header_buf_.size() << " bytes, \\r\\n\\r\\n at pos=" 
+    VLOG(dc) << "T3_HTTP_POST: consumed " << http_header_buf_.size() << " bytes, \\r\\n\\r\\n at pos=" 
                  << (pos == string::npos ? -1 : static_cast<int>(pos))
                  << " last4=[" << (http_header_buf_.size() >= 4 ? http_header_buf_.substr(http_header_buf_.size() - 4) : "<short>") << "]";
   }

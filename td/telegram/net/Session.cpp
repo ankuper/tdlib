@@ -373,7 +373,7 @@ void Session::send(NetQueryPtr &&query) {
   query->set_real_dc_id(raw_dc_id_);
   query->set_main_auth_key_id(auth_data_.get_main_auth_key().id());
   query->set_session_id(auth_data_.get_session_id());
-  LOG(WARNING) << "T3_SESSION: received query " << query->id() << " tl=" << format::as_hex(query->tl_constructor());
+  VLOG(dc) << "T3_SESSION: received query " << query->id() << " tl=" << format::as_hex(query->tl_constructor());
   VLOG(net_query) << "Receive query " << query;
   if (query->update_is_ready()) {
     return_query(std::move(query));
@@ -620,7 +620,7 @@ void Session::on_server_time_difference_updated(bool force) {
 }
 
 void Session::on_closed(Status status) {
-  LOG(WARNING) << "T3_CLOSE: connection closed, status=" << status << " info_id=" << current_info_->connection_id_
+  VLOG(dc) << "T3_CLOSE: connection closed, status=" << status << " info_id=" << current_info_->connection_id_
                << " is_ws_type3=" << current_info_->is_ws_type3_;
   if (!close_flag_ && is_main_) {
     connection_token_.reset();
@@ -1296,9 +1296,12 @@ void Session::connection_open_finish(ConnectionInfo *info,
   Scheduler::subscribe(info->connection_->get_poll_info().extract_pollable_fd(this));
   info->mode_ = mode_;
   // === TYPE3-PROXY BEGIN ===
-  info->is_ws_type3_ = (raw_tt == mtproto::TransportType::WebSocketType3);
+  info->is_ws_type3_ = (raw_tt == mtproto::TransportType::WebSocketType3 ||
+                         raw_tt == mtproto::TransportType::HttpStreamType3);
   if (info->is_ws_type3_) {
-    LOG(WARNING) << "Type3: connection opened with WebSocketType3 transport, id=" << info->connection_id_;
+    LOG(WARNING) << "Type3: connection opened with "
+                 << (raw_tt == mtproto::TransportType::HttpStreamType3 ? "HttpStreamType3" : "WebSocketType3")
+                 << " transport, id=" << info->connection_id_;
   }
   // === TYPE3-PROXY END ===
   info->state_ = ConnectionInfo::State::Ready;
@@ -1370,7 +1373,7 @@ bool Session::need_send_query() const {
   bool result = !close_flag_ && !need_check_main_key_ && (!auth_data_.use_pfs() || auth_data_.get_bind_flag()) &&
          !pending_queries_.empty() && !can_destroy_auth_key();
   if (!result && !pending_queries_.empty()) {
-    LOG(WARNING) << "T3_QUERY: need_send_query=false, close=" << close_flag_
+    VLOG(dc) << "T3_QUERY: need_send_query=false, close=" << close_flag_
                  << " check_main_key=" << need_check_main_key_
                  << " use_pfs=" << auth_data_.use_pfs()
                  << " bind_flag=" << auth_data_.get_bind_flag()
@@ -1577,7 +1580,7 @@ void Session::loop() {
     while (main_connection_.state_ == ConnectionInfo::State::Ready) {
       if (auth_data_.is_ready(now)) {
         if (need_send_query()) {
-          LOG(WARNING) << "T3_LOOP: dispatching queries";
+          VLOG(dc) << "T3_LOOP: dispatching queries";
           while (!pending_queries_.empty() && sent_queries_.size() < MAX_INFLIGHT_QUERIES) {
             auto query = pending_queries_.pop();
             connection_send_query(&main_connection_, std::move(query));
@@ -1594,7 +1597,7 @@ void Session::loop() {
           need_flush = true;
         }
       } else {
-        LOG(WARNING) << "T3_LOOP: auth_data NOT ready"
+        VLOG(dc) << "T3_LOOP: auth_data NOT ready"
                      << " pfs=" << auth_data_.use_pfs() << " bind=" << auth_data_.get_bind_flag();
       }
       if (need_flush) {
@@ -1605,7 +1608,7 @@ void Session::loop() {
       }
     }
   } else if (!pending_queries_.empty()) {
-    LOG(WARNING) << "T3_STALL: main_connection NOT ready, state=" << static_cast<int>(main_connection_.state_)
+    VLOG(dc) << "T3_STALL: main_connection NOT ready, state=" << static_cast<int>(main_connection_.state_)
                  << " is_ready=" << auth_data_.is_ready(now)
                  << " use_pfs=" << auth_data_.use_pfs()
                  << " bind=" << auth_data_.get_bind_flag();
