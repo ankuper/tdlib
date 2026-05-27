@@ -829,9 +829,17 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
           G()->get_dns_time_difference()));
     // === TYPE3-PROXY BEGIN ===
     } else if (proxy.use_teleproto3_proxy()) {
-      return ActorOwn<>(create_actor<WebSocketType3Proxy>(
-          PSLICE() << actor_name_prefix << "Type3Proxy", std::move(socket_fd), mtproto_ip_address,
-          proxy.endpoint().str(), std::move(callback), std::move(parent)));
+      if (transport_type.type == mtproto::TransportType::HttpStreamType3) {
+        // HTTPS endpoint — TLS-only handshake, no WebSocket upgrade
+        return ActorOwn<>(create_actor<HttpStreamType3Proxy>(
+            PSLICE() << actor_name_prefix << "Type3Proxy", std::move(socket_fd), mtproto_ip_address,
+            proxy.endpoint().str(), std::move(callback), std::move(parent)));
+      } else {
+        // WSS endpoint — WebSocket upgrade after TLS
+        return ActorOwn<>(create_actor<WebSocketType3Proxy>(
+            PSLICE() << actor_name_prefix << "Type3Proxy", std::move(socket_fd), mtproto_ip_address,
+            proxy.endpoint().str(), std::move(callback), std::move(parent)));
+      }
     // === TYPE3-PROXY END ===
     } else {
       UNREACHABLE();

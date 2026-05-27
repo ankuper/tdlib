@@ -21,6 +21,7 @@
 #include "td/net/NetStats.h"
 // === TYPE3-PROXY BEGIN ===
 #include "td/net/WebSocketType3Proxy.h"
+#include "td/net/HttpStreamType3Proxy.h"
 // === TYPE3-PROXY END ===
 
 #include "td/actor/actor.h"
