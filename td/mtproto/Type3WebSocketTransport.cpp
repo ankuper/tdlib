@@ -20,7 +20,7 @@
 namespace td {
 namespace mtproto {
 
-bool Type3WebSocketTransport::g_padding_ever_rejected_ = false;
+std::atomic<bool> Type3WebSocketTransport::g_padding_ever_rejected_{false};
 
 // ---------------------------------------------------------------------------
 // init() — sends 64-byte obfuscated-2 init, derives AES-CTR keys
@@ -79,7 +79,7 @@ void Type3WebSocketTransport::send_init_sequence() {
   // command_type = 0x01 (MTPROTO_PASSTHROUGH)
   // version      = 0x01
   // flags        = T3_FLAG_PADDING (0x0001) or 0x0000 if rejected
-  padding_rejected_ = g_padding_ever_rejected_;
+  padding_rejected_ = g_padding_ever_rejected_.load(std::memory_order_relaxed);
   header[0] = 0x01;  // command_type
   header[1] = 0x01;  // version
   uint16 flags = padding_rejected_ ? 0x0000 : T3_FLAG_PADDING;
@@ -109,7 +109,7 @@ void Type3WebSocketTransport::send_init_sequence() {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)proxy_secret[i]);
       hex += buf;
     }
-    LOG(WARNING) << "T3_DEBUG: proxy_secret(" << proxy_secret.size() << ")=" << hex;
+    VLOG(dc) << "T3_DEBUG: proxy_secret(" << proxy_secret.size() << ")=" << hex;
   }
 
   // send_key = SHA256(header[8..40] || proxy_secret[0..16])
@@ -159,9 +159,9 @@ void Type3WebSocketTransport::send_init_sequence() {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)iv_slice[i]);
       iv_hex += buf;
     }
-    LOG(WARNING) << "T3_DEBUG: plaintext_header=" << hdr_hex;
-    LOG(WARNING) << "T3_DEBUG: send_key=" << key_hex;
-    LOG(WARNING) << "T3_DEBUG: send_iv=" << iv_hex;
+    VLOG(dc) << "T3_DEBUG: plaintext_header=" << hdr_hex;
+    VLOG(dc) << "T3_DEBUG: send_key=" << key_hex;
+    VLOG(dc) << "T3_DEBUG: send_iv=" << iv_hex;
   }
 
   // Initialise AES-CTR states (continuous across all WS frames — no per-frame reset)
@@ -189,14 +189,14 @@ void Type3WebSocketTransport::send_init_sequence() {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)header[i]);
       wire_hex += buf;
     }
-    LOG(WARNING) << "T3_DEBUG: wire_header=" << wire_hex;
+    VLOG(dc) << "T3_DEBUG: wire_header=" << wire_hex;
     // Dump encrypted bytes 56-63 separately
     string enc_hex;
     for (size_t i = 56; i < 64; i++) {
       char buf[3]; snprintf(buf, sizeof(buf), "%02x", (unsigned char)header[i]);
       enc_hex += buf;
     }
-    LOG(WARNING) << "T3_DEBUG: encrypted_tag_bytes=" << enc_hex;
+    VLOG(dc) << "T3_DEBUG: encrypted_tag_bytes=" << enc_hex;
   }
 
   // Send the 64-byte init as a single WS binary frame
@@ -223,7 +223,9 @@ void Type3WebSocketTransport::append_ws_frame(Slice payload) {
   if (len <= 125) {
     frame_header += static_cast<char>(0x80 | len);
   } else if (len <= 65535) {
-    frame_header += static_cast<char>(0xFE);  // 0x80 | 126
+    frame_header += static_cast<char>(0xFE);  // RFC 6455 §5.2: MASK(1)|126 = 0x80|0x7E = 0xFE
+                                               // NOT T3_PADDING_MARKER — that is the first *decrypted*
+                                               // AES-CTR payload byte; this is a plaintext WS frame-header byte.
     frame_header += static_cast<char>((len >> 8) & 0xFF);
     frame_header += static_cast<char>(len & 0xFF);
   } else {
