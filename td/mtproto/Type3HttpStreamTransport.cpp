@@ -213,9 +213,25 @@ void Type3HttpStreamTransport::write(BufferWriter &&message, bool quick_ack) {
 // ---------------------------------------------------------------------------
 bool Type3HttpStreamTransport::try_parse_http_response() {
   input_->sync_with_writer();
+  LOG(WARNING) << "T3_HTTP_PARSE: input size=" << input_->size() << " headers_parsed=" << http_headers_parsed_
+               << " header_buf_size=" << http_header_buf_.size();
+  if (input_->size() > 0 && http_header_buf_.empty()) {
+    // Dump first 64 bytes as hex for diagnosis
+    size_t dump_len = std::min(input_->size(), static_cast<size_t>(256));
+    auto slice = input_->prepare_read();
+    size_t actual = std::min(dump_len, slice.size());
+    string hex;
+    string ascii;
+    for (size_t i = 0; i < actual; i++) {
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%02x ", static_cast<unsigned char>(slice[i]));
+      hex += buf;
+      ascii += (slice[i] >= 32 && slice[i] < 127) ? slice[i] : '.';
+    }
+    LOG(WARNING) << "T3_HTTP_DUMP: actual=" << actual << "/" << dump_len << " ascii=[" << ascii << "]";
+  }
 
   while (input_->size() > 0) {
-    // Read one byte at a time into header buffer
     char c;
     input_->advance(1, MutableSlice(&c, 1));
     http_header_buf_ += c;
@@ -239,6 +255,13 @@ bool Type3HttpStreamTransport::try_parse_http_response() {
       closed_ = true;
       return true;
     }
+  }
+  // Post-loop diagnostic
+  if (!http_headers_parsed_ && !http_header_buf_.empty()) {
+    auto pos = http_header_buf_.find("\r\n\r\n");
+    LOG(WARNING) << "T3_HTTP_POST: consumed " << http_header_buf_.size() << " bytes, \\r\\n\\r\\n at pos=" 
+                 << (pos == string::npos ? -1 : static_cast<int>(pos))
+                 << " last4=[" << (http_header_buf_.size() >= 4 ? http_header_buf_.substr(http_header_buf_.size() - 4) : "<short>") << "]";
   }
   return false;  // need more data
 }
