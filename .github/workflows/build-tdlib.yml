@@ -36,9 +36,10 @@ permissions:
 
 env:
   # Per release rules (CLAUDE.md): consume the prebuilt libteleproto3 from the
-  # teleproto3 GitHub Release — never build it from source. Bump this to roll
-  # the whole CI (native matrix + Docker image) to a new teleproto3 version.
-  TELEPROTO3_VERSION: v0.7.0
+  # teleproto3 GitHub Release — never build it from source. Defaults to the
+  # latest release; set a concrete vX.Y.Z to pin the whole CI (native matrix +
+  # Docker image) to a specific teleproto3 version.
+  TELEPROTO3_VERSION: latest
 
 jobs:
   # ── Identity Audit ─────────────────────────────────────────────────────────
@@ -161,8 +162,13 @@ jobs:
       - name: Download libteleproto3 ${{ env.TELEPROTO3_VERSION }}
         run: |
           mkdir -p /tmp/teleproto3
+          if [ "$TELEPROTO3_VERSION" = "latest" ]; then
+            T3_BASE="https://github.com/ankuper/teleproto3/releases/latest/download"
+          else
+            T3_BASE="https://github.com/ankuper/teleproto3/releases/download/${TELEPROTO3_VERSION}"
+          fi
           curl -fsSL \
-            "https://github.com/ankuper/teleproto3/releases/download/${TELEPROTO3_VERSION}/${{ matrix.t3asset }}" \
+            "${T3_BASE}/${{ matrix.t3asset }}" \
             -o /tmp/teleproto3/lib.tar.gz
           tar -xzf /tmp/teleproto3/lib.tar.gz -C /tmp/teleproto3
           echo "TELEPROTO3_LIB_DIR=/tmp/teleproto3/lib" >> "$GITHUB_ENV"

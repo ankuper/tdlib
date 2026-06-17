@@ -26,8 +26,9 @@
 FROM ubuntu:24.04 AS builder
 
 # Build-time arg: teleproto3 release version to pull the prebuilt lib from.
-# Overridden by build-tdlib.yml (single source of truth: env.TELEPROTO3_VERSION).
-ARG TELEPROTO3_VERSION=v0.7.0
+# Defaults to latest; overridden by build-tdlib.yml (single source of truth:
+# env.TELEPROTO3_VERSION).
+ARG TELEPROTO3_VERSION=latest
 
 # Avoid interactive prompts during apt-get
 ENV DEBIAN_FRONTEND=noninteractive
@@ -50,8 +51,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (CLAUDE.md release rule — never build from source). linux/amd64 image →
 # linux-x86_64 asset. The tarball extracts to lib/libteleproto3.a +
 # lib/include/{t3.h,...}; install to /usr/local for CMake find_library().
-RUN curl -fsSL \
-        "https://github.com/ankuper/teleproto3/releases/download/${TELEPROTO3_VERSION}/libteleproto3-linux-x86_64.tar.gz" \
+RUN if [ "${TELEPROTO3_VERSION}" = "latest" ]; then \
+        T3_BASE="https://github.com/ankuper/teleproto3/releases/latest/download"; \
+    else \
+        T3_BASE="https://github.com/ankuper/teleproto3/releases/download/${TELEPROTO3_VERSION}"; \
+    fi \
+    && curl -fsSL \
+        "${T3_BASE}/libteleproto3-linux-x86_64.tar.gz" \
         -o /tmp/libteleproto3.tar.gz \
     && mkdir -p /tmp/t3 \
     && tar -xzf /tmp/libteleproto3.tar.gz -C /tmp/t3 \
