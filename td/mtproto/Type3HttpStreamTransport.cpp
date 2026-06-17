@@ -383,7 +383,7 @@ Result<BufferSlice> Type3HttpStreamTransport::read_http_chunk() {
 // ---------------------------------------------------------------------------
 // read_next() — read one decoded MTProto packet from the input stream
 // ---------------------------------------------------------------------------
-Result<size_t> Type3HttpStreamTransport::read_next(BufferSlice *message, uint32 *quick_ack) {
+Result<size_t> Type3HttpStreamTransport::read_next(BufferSlice *message, uint32 *quick_ack, int32 * /*error_code*/) {
   if (closed_) {
     return Status::Error("HTTP stream connection closed");
   }

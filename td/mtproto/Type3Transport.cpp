@@ -189,7 +189,7 @@ Result<BufferSlice> Type3Transport::read_frame() {
 // ---------------------------------------------------------------------------
 // read_next() — deframe + decrypt → extract intermediate-format packets
 // ---------------------------------------------------------------------------
-Result<size_t> Type3Transport::read_next(BufferSlice *message, uint32 * /*quick_ack*/) {
+Result<size_t> Type3Transport::read_next(BufferSlice *message, uint32 * /*quick_ack*/, int32 * /*error_code*/) {
   if (closed_) return 0;
 
   while (true) {

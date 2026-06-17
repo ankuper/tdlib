@@ -39,7 +39,7 @@ class Type3Transport final : public IStreamTransport {
   }
 
   // IStreamTransport interface
-  Result<size_t> read_next(BufferSlice *message, uint32 *quick_ack) final TD_WARN_UNUSED_RESULT;
+  Result<size_t> read_next(BufferSlice *message, uint32 *quick_ack, int32 *error_code) final TD_WARN_UNUSED_RESULT;
   bool support_quick_ack() const final { return false; }
   void write(BufferWriter &&message, bool quick_ack) final;
   bool can_read() const final { return !closed_; }

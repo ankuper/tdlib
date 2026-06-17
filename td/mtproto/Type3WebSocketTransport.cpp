@@ -316,7 +316,7 @@ void Type3WebSocketTransport::write(BufferWriter &&message, bool quick_ack) {
 // ---------------------------------------------------------------------------
 // read_next() — read one decoded MTProto packet from the input stream
 // ---------------------------------------------------------------------------
-Result<size_t> Type3WebSocketTransport::read_next(BufferSlice *message, uint32 *quick_ack) {
+Result<size_t> Type3WebSocketTransport::read_next(BufferSlice *message, uint32 *quick_ack, int32 * /*error_code*/) {
   if (ws_closed_) {
     return Status::Error("WebSocket connection closed");
   }
