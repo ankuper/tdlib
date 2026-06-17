@@ -7,11 +7,13 @@
 # Platform: linux/amd64 only
 #
 # Build strategy:
-#   Stage 1 (builder): Ubuntu 24.04 + CMake + g++ + deps → build TDLib + libteleproto3
+#   Stage 1 (builder): Ubuntu 24.04 + CMake + g++ + deps → build TDLib
 #   Stage 2 (runtime): Ubuntu 24.04 minimal → shared libs + headers only
 #
-# libteleproto3 acquisition: Option B (build from source) — no release artifacts
-# exist for ankuper/teleproto3 yet. The source repo is cloned at build time.
+# libteleproto3 acquisition: prebuilt static lib downloaded from the
+# ankuper/teleproto3 GitHub Release (CLAUDE.md release rule — never build from
+# source). Pinned via the TELEPROTO3_VERSION build-arg; linux/amd64 image
+# consumes the linux-x86_64 asset.
 #
 # Drop-in replacement for dikidi-tdlib:latest:
 #   /usr/local/lib/libtdjson.so*       — shared library for go-tdlib CGO
@@ -23,8 +25,9 @@
 # ─── Build stage ──────────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS builder
 
-# Build-time arg: teleproto3 git ref to build from source (Option B)
-ARG TELEPROTO3_REF=main
+# Build-time arg: teleproto3 release version to pull the prebuilt lib from.
+# Overridden by build-tdlib.yml (single source of truth: env.TELEPROTO3_VERSION).
+ARG TELEPROTO3_VERSION=v0.7.0
 
 # Avoid interactive prompts during apt-get
 ENV DEBIAN_FRONTEND=noninteractive
@@ -35,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     make \
     git \
+    curl \
     zlib1g-dev \
     libssl-dev \
     gperf \
@@ -42,17 +46,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # === TYPE3-PROXY BEGIN ===
-# Build libteleproto3 from source (Option B — no GitHub release artifacts available)
-# Clones ankuper/teleproto3 at TELEPROTO3_REF, builds lib, installs to /usr/local
-RUN git clone --depth 1 --branch "${TELEPROTO3_REF}" \
-        https://github.com/ankuper/teleproto3.git /teleproto3 \
-    && mkdir -p /teleproto3/lib/build \
-    && cmake -S /teleproto3/lib -B /teleproto3/lib/build \
-        -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build /teleproto3/lib/build -j"$(nproc)" \
-    && cp /teleproto3/lib/build/libteleproto3.a /usr/local/lib/libteleproto3.a \
-    && cp /teleproto3/lib/include/t3.h /usr/local/include/t3.h \
-    && rm -rf /teleproto3
+# Download prebuilt libteleproto3 from the ankuper/teleproto3 GitHub Release
+# (CLAUDE.md release rule — never build from source). linux/amd64 image →
+# linux-x86_64 asset. The tarball extracts to lib/libteleproto3.a +
+# lib/include/{t3.h,...}; install to /usr/local for CMake find_library().
+RUN curl -fsSL \
+        "https://github.com/ankuper/teleproto3/releases/download/${TELEPROTO3_VERSION}/libteleproto3-linux-x86_64.tar.gz" \
+        -o /tmp/libteleproto3.tar.gz \
+    && mkdir -p /tmp/t3 \
+    && tar -xzf /tmp/libteleproto3.tar.gz -C /tmp/t3 \
+    && cp /tmp/t3/lib/libteleproto3.a /usr/local/lib/libteleproto3.a \
+    && cp /tmp/t3/lib/include/t3.h /usr/local/include/t3.h \
+    && rm -rf /tmp/t3 /tmp/libteleproto3.tar.gz
 # === TYPE3-PROXY END ===
 
 # Copy TDLib source (the entire teleproto3-support branch including 10-1..10-4 changes)
