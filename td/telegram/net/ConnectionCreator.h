@@ -20,8 +20,10 @@
 
 #include "td/net/NetStats.h"
 // === TYPE3-PROXY BEGIN ===
-#include "td/net/WebSocketType3Proxy.h"
-#include "td/net/HttpStreamType3Proxy.h"
+// Type3 no longer uses dedicated proxy actors — its transport is built in
+// mtproto::RawConnection::create via libteleproto3's t3_client_*. TlsPipeline is
+// still referenced by the (now-vestigial) ConnectionData::tls_pipeline member.
+#include "td/net/TlsPipeline.h"
 // === TYPE3-PROXY END ===
 
 #include "td/actor/actor.h"

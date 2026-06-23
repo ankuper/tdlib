@@ -13,6 +13,8 @@
 
 // === TYPE3-PROXY BEGIN ===
 #include "td/net/TlsPipeline.h"
+#include "td/mtproto/RawConnectionType3.h"
+#include "td/utils/UInt.h"
 // === TYPE3-PROXY END ===
 
 #if TD_DARWIN_WATCH_OS
@@ -30,6 +32,7 @@
 #include "td/utils/Status.h"
 #include "td/utils/StorerBase.h"
 
+#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -538,6 +541,35 @@ unique_ptr<RawConnection> RawConnection::create(IPAddress ip_address, BufferedFd
 #if TD_DARWIN_WATCH_OS
   return td::make_unique<RawConnectionHttp>(std::move(ip_address), std::move(stats_callback));
 #else
+  // === TYPE3-PROXY BEGIN ===
+  // Type3 (HTTP-stream) transport is provided entirely by libteleproto3 via the
+  // canonical t3_client_* API (TLS + obfs2 init + AES-CTR + HTTP-chunk framing).
+  // The C library owns its own fd/TLS, so the TCP socket opened upstream is not
+  // used here — drop it and build a RawConnectionType3 instead. There is no
+  // client-side re-implementation of the Type3 wire format anymore.
+  if (transport_type.type == TransportType::HttpStreamType3) {
+    buffered_socket_fd.close();  // unused: t3_client owns its own socket
+    // Reconstruct the https endpoint from the parsed host (carries :port) + path.
+    string endpoint = PSTRING() << "https://" << transport_type.host;
+    if (!transport_type.path.empty()) {
+      endpoint += '/';
+      endpoint += transport_type.path;
+    }
+    // Extract the 16-byte Type3 key from the proxy secret.
+    Slice raw_secret = transport_type.secret.get_proxy_secret();
+    UInt128 key{};
+    if (raw_secret.size() >= 16) {
+      std::memcpy(key.raw, raw_secret.data(), 16);
+    }
+    auto r_conn = create_raw_connection_type3(std::move(ip_address), std::move(endpoint), key,
+                                              transport_type.dc_id, std::move(stats_callback));
+    if (r_conn.is_error()) {
+      LOG(ERROR) << "Failed to create Type3 raw connection: " << r_conn.error();
+      return {};
+    }
+    return r_conn.move_as_ok();
+  }
+  // === TYPE3-PROXY END ===
   return td::make_unique<RawConnectionDefault>(std::move(buffered_socket_fd), std::move(transport_type),
                                                std::move(stats_callback), std::move(tls_pipeline));
 #endif

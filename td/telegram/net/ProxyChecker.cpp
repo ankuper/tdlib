@@ -102,6 +102,13 @@ void ProxyChecker::on_test_proxy_connection_data(uint64 request_id, Result<Conne
   auto data = r_data.move_as_ok();
   auto raw_connection = mtproto::RawConnection::create(data.ip_address, std::move(data.buffered_socket_fd),
                                                        request->get_transport(), nullptr);
+  // === TYPE3-PROXY BEGIN ===
+  if (raw_connection == nullptr) {  // Type3 t3_client_create failure
+    auto promise = std::move(request->promise_);
+    test_proxy_requests_.erase(it);
+    return promise.set_error(Status::Error("Failed to create Type3 connection"));
+  }
+  // === TYPE3-PROXY END ===
   request->child_ = create_actor<mtproto::HandshakeActor>(
       "HandshakeActor", std::move(handshake), std::move(raw_connection), make_unique<HandshakeContext>(), 10.0,
       PromiseCreator::lambda(

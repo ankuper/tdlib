@@ -1296,12 +1296,9 @@ void Session::connection_open_finish(ConnectionInfo *info,
   Scheduler::subscribe(info->connection_->get_poll_info().extract_pollable_fd(this));
   info->mode_ = mode_;
   // === TYPE3-PROXY BEGIN ===
-  info->is_ws_type3_ = (raw_tt == mtproto::TransportType::WebSocketType3 ||
-                         raw_tt == mtproto::TransportType::HttpStreamType3);
+  info->is_ws_type3_ = (raw_tt == mtproto::TransportType::HttpStreamType3);
   if (info->is_ws_type3_) {
-    LOG(WARNING) << "Type3: connection opened with "
-                 << (raw_tt == mtproto::TransportType::HttpStreamType3 ? "HttpStreamType3" : "WebSocketType3")
-                 << " transport, id=" << info->connection_id_;
+    LOG(WARNING) << "Type3: connection opened with HttpStreamType3 transport, id=" << info->connection_id_;
   }
   // === TYPE3-PROXY END ===
   info->state_ = ConnectionInfo::State::Ready;
