@@ -143,9 +143,12 @@ class SessionConnection final
   bool was_moved_ = false;
 
   // === TYPE3-PROXY BEGIN ===
+  // True for Type3 (HTTP-stream via libteleproto3) connections. These get more
+  // generous ping/disconnect timeouts than plain TCP. (Named *_ws for historical
+  // reasons; WebSocket transport is gone — HTTP-stream is the only Type3 mode.)
   bool is_type3_ws() const {
     return raw_connection_ != nullptr &&
-           raw_connection_->get_transport_type().type == TransportType::WebSocketType3;
+           raw_connection_->get_transport_type().type == TransportType::HttpStreamType3;
   }
   // === TYPE3-PROXY END ===
 

@@ -15,7 +15,9 @@ namespace mtproto {
 
 struct TransportType {
   // === TYPE3-PROXY BEGIN ===
-  enum Type { Tcp, ObfuscatedTcp, Http, WebSocketType3, HttpStreamType3 } type = Tcp;
+  // HttpStreamType3 = Type3 transport via libteleproto3 t3_client_* (HTTP-stream).
+  // WebSocket transport is dead and intentionally not represented.
+  enum Type { Tcp, ObfuscatedTcp, Http, HttpStreamType3 } type = Tcp;
   // === TYPE3-PROXY END ===
   int16 dc_id{0};
   ProxySecret secret;

@@ -19,9 +19,11 @@ set(TD_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/tqueue.cpp
 
   # === TYPE3-PROXY BEGIN ===
+  # Type3 transport is now provided by libteleproto3 (t3_client_*) and exercised
+  # by its own CI; the old client-side-reimpl unit tests (type3_transport.cpp /
+  # type3_wss_proxy.cpp) were removed with the re-implementation. The TL schema
+  # type proxyTypeTeleproto3 is kept and still tested here.
   ${CMAKE_CURRENT_SOURCE_DIR}/type3_schema.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/type3_transport.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/type3_wss_proxy.cpp
   # === TYPE3-PROXY END ===
 
   ${CMAKE_CURRENT_SOURCE_DIR}/data.cpp

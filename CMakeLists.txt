@@ -294,14 +294,13 @@ set(TD_MTPROTO_SOURCE
   td/mtproto/PingConnection.cpp
   td/mtproto/ProxySecret.cpp
   td/mtproto/RawConnection.cpp
+  # === TYPE3-PROXY BEGIN ===
+  td/mtproto/RawConnectionType3.cpp
+  # === TYPE3-PROXY END ===
   td/mtproto/RSA.cpp
   td/mtproto/SessionConnection.cpp
   td/mtproto/TcpTransport.cpp
   td/mtproto/TlsInit.cpp
-  # === TYPE3-PROXY BEGIN ===
-  td/mtproto/Type3WebSocketTransport.cpp
-  td/mtproto/Type3HttpStreamTransport.cpp
-  # === TYPE3-PROXY END ===
   td/mtproto/TlsReaderByteFlow.cpp
   td/mtproto/Transport.cpp
   td/mtproto/utils.cpp
@@ -327,14 +326,13 @@ set(TD_MTPROTO_SOURCE
   td/mtproto/PingConnection.h
   td/mtproto/ProxySecret.h
   td/mtproto/RawConnection.h
+  # === TYPE3-PROXY BEGIN ===
+  td/mtproto/RawConnectionType3.h
+  # === TYPE3-PROXY END ===
   td/mtproto/RSA.h
   td/mtproto/SessionConnection.h
   td/mtproto/TcpTransport.h
   td/mtproto/TlsInit.h
-  # === TYPE3-PROXY BEGIN ===
-  td/mtproto/Type3WebSocketTransport.h
-  td/mtproto/Type3HttpStreamTransport.h
-  # === TYPE3-PROXY END ===
   td/mtproto/TlsReaderByteFlow.h
   td/mtproto/Transport.h
   td/mtproto/TransportType.h
@@ -1326,9 +1324,11 @@ if (NOT CMAKE_CROSSCOMPILING)
   add_dependencies(tdmtproto tl_generate_mtproto)
 endif()
 # === TYPE3-PROXY BEGIN ===
-# libteleproto3 linkage for Type3Transport.
+# libteleproto3 linkage for the Type3 transport (mtproto::RawConnectionType3).
 # Pass -DTELEPROTO3_LIB_DIR=<path> and -DTELEPROTO3_INCLUDE_DIR=<path> at configure time.
-# TELEPROTO3_SRC_DIR points to lib/src/ for internal headers (t3_client_crypto.h, t3_client_ws.h).
+# Only the PUBLIC header t3_client.h is consumed (the canonical t3_client_* API) —
+# no libteleproto3-internal headers are needed anymore, so TELEPROTO3_SRC_DIR is
+# optional/unused for the client transport.
 # T3_STATIC_LIB suppresses Windows DLL decoration on all platforms (safe no-op on Linux/macOS).
 if (TELEPROTO3_LIB_DIR)
   find_library(TELEPROTO3_LIB
@@ -1347,7 +1347,7 @@ if (TELEPROTO3_LIB_DIR)
   target_compile_definitions(tdmtproto PRIVATE T3_STATIC_LIB)
   message(STATUS "TYPE3-PROXY: linking libteleproto3 from ${TELEPROTO3_LIB}")
 else()
-  message(STATUS "TYPE3-PROXY: TELEPROTO3_LIB_DIR not set — Type3Transport will link without libteleproto3")
+  message(STATUS "TYPE3-PROXY: TELEPROTO3_LIB_DIR not set — RawConnectionType3 will link without libteleproto3")
 endif()
 # === TYPE3-PROXY END ===
 

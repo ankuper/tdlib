@@ -601,6 +601,11 @@ void ConnectionCreator::request_raw_connection_by_ip(IPAddress ip_address, mtpro
     auto connection_data = r_connection_data.move_as_ok();
     auto raw_connection = mtproto::RawConnection::create(ip_address, std::move(connection_data.buffered_socket_fd),
                                                          transport_type, nullptr);
+    // === TYPE3-PROXY BEGIN ===
+    if (raw_connection == nullptr) {  // Type3 t3_client_create failure
+      return promise.set_error(400, "Failed to create Type3 connection");
+    }
+    // === TYPE3-PROXY END ===
     raw_connection->extra().extra = network_generation;
     promise.set_value(std::move(raw_connection));
   });
@@ -627,24 +632,23 @@ Result<mtproto::TransportType> ConnectionCreator::get_transport_type(const Proxy
   }
   // === TYPE3-PROXY BEGIN ===
   if (proxy.use_teleproto3_proxy()) {
+    // Type3 transport is HTTP-stream ONLY, provided by libteleproto3's t3_client_*
+    // API (see mtproto::RawConnectionType3). WebSocket transport is dead. The
+    // endpoint host (carrying :port) and path are parsed here so they can be
+    // reconstructed back into the https URL in RawConnection::create.
     auto ep = proxy.endpoint().str();
-    bool use_http_stream = (ep.substr(0, 8) == "https://" || ep.substr(0, 7) == "http://");
-    if (use_http_stream) {
-      // Parse host and path from https://host/path or http://host/path
-      string host, path;
-      size_t scheme_end = ep.find("://");
-      auto rest = ep.substr(scheme_end + 3);
-      auto slash_pos = rest.find('/');
-      if (slash_pos != string::npos) {
-        host = rest.substr(0, slash_pos);
-        path = rest.substr(slash_pos + 1);
-      } else {
-        host = rest;
-      }
-      return mtproto::TransportType{mtproto::TransportType::HttpStreamType3, raw_dc_id, proxy.secret(),
-                                     std::move(host), std::move(path)};
+    string host, path;
+    size_t scheme_end = ep.find("://");
+    auto rest = scheme_end == string::npos ? ep : ep.substr(scheme_end + 3);
+    auto slash_pos = rest.find('/');
+    if (slash_pos != string::npos) {
+      host = rest.substr(0, slash_pos);
+      path = rest.substr(slash_pos + 1);
+    } else {
+      host = rest;
     }
-    return mtproto::TransportType{mtproto::TransportType::WebSocketType3, raw_dc_id, proxy.secret()};
+    return mtproto::TransportType{mtproto::TransportType::HttpStreamType3, raw_dc_id, proxy.secret(),
+                                   std::move(host), std::move(path)};
   }
   // === TYPE3-PROXY END ===
   if (proxy.use_http_caching_proxy()) {
@@ -721,9 +725,13 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
                                                  ActorShared<> parent, bool use_connection_token,
                                                  Promise<ConnectionData> promise) {
   // === TYPE3-PROXY BEGIN ===
-  if (proxy.use_socks5_proxy() || proxy.use_http_tcp_proxy() || transport_type.secret.emulate_tls() ||
-      proxy.use_teleproto3_proxy()) {
+  // NB: Type3 (use_teleproto3_proxy) is intentionally NOT handled as a transparent
+  // proxy. Its whole transport (TLS + obfs2 + AES-CTR + HTTP-chunk framing) lives
+  // in libteleproto3 and is built inside RawConnection::create via t3_client_*.
+  // It takes the direct-connection branch below; the pre-opened TCP socket is
+  // closed there and t3_client opens its own.
   // === TYPE3-PROXY END ===
+  if (proxy.use_socks5_proxy() || proxy.use_http_tcp_proxy() || transport_type.secret.emulate_tls()) {
     VLOG(connections) << "Create new transparent proxy connection " << debug_str;
     class Callback final : public TransparentProxy::Callback {
      public:
@@ -784,9 +792,6 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
     VLOG(connections) << "Start "
                       << (proxy.use_socks5_proxy()     ? "Socks5"
                           : proxy.use_http_tcp_proxy() ? "HTTP"
-                          // === TYPE3-PROXY BEGIN ===
-                          : proxy.use_teleproto3_proxy() ? "Type3"
-                          // === TYPE3-PROXY END ===
                                                         : "TLS")
                       << ": " << debug_str;
     auto callback = make_unique<Callback>(std::move(promise), ip_address, std::move(stats_callback),
@@ -804,20 +809,6 @@ ActorOwn<> ConnectionCreator::prepare_connection(IPAddress ip_address, SocketFd 
           PSLICE() << actor_name_prefix << "TlsInit", std::move(socket_fd), transport_type.secret.get_domain(),
           transport_type.secret.get_proxy_secret().str(), std::move(callback), std::move(parent),
           G()->get_dns_time_difference()));
-    // === TYPE3-PROXY BEGIN ===
-    } else if (proxy.use_teleproto3_proxy()) {
-      if (transport_type.type == mtproto::TransportType::HttpStreamType3) {
-        // HTTPS endpoint — TLS-only handshake, no WebSocket upgrade
-        return ActorOwn<>(create_actor<HttpStreamType3Proxy>(
-            PSLICE() << actor_name_prefix << "Type3Proxy", std::move(socket_fd), mtproto_ip_address,
-            proxy.endpoint().str(), std::move(callback), std::move(parent)));
-      } else {
-        // WSS endpoint — WebSocket upgrade after TLS
-        return ActorOwn<>(create_actor<WebSocketType3Proxy>(
-            PSLICE() << actor_name_prefix << "Type3Proxy", std::move(socket_fd), mtproto_ip_address,
-            proxy.endpoint().str(), std::move(callback), std::move(parent)));
-      }
-    // === TYPE3-PROXY END ===
     } else {
       UNREACHABLE();
     }
@@ -1008,6 +999,11 @@ void ConnectionCreator::client_create_raw_connection(Result<ConnectionData> r_co
       mtproto::RawConnection::create(connection_data.ip_address, std::move(connection_data.buffered_socket_fd),
                                      std::move(transport_type), std::move(connection_data.stats_callback),
                                      std::move(connection_data.tls_pipeline));
+  // === TYPE3-PROXY BEGIN ===
+  if (raw_connection == nullptr) {  // Type3 t3_client_create failure
+    return promise.set_error(Status::Error("Failed to create Type3 connection"));
+  }
+  // === TYPE3-PROXY END ===
   raw_connection->set_connection_token(std::move(connection_data.connection_token));
 
   raw_connection->extra().extra = network_generation;
