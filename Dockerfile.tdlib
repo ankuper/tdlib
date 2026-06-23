@@ -26,9 +26,9 @@
 FROM ubuntu:24.04 AS builder
 
 # Build-time arg: teleproto3 release version to pull the prebuilt lib from.
-# Defaults to latest; overridden by build-tdlib.yml (single source of truth:
-# env.TELEPROTO3_VERSION).
-ARG TELEPROTO3_VERSION=latest
+# Overridden by build-tdlib.yml (single source of truth: env.TELEPROTO3_VERSION).
+# Pinned to a teleproto3 release/tag (policy: never float to `latest`).
+ARG TELEPROTO3_VERSION=lib-v0.8.0
 
 # Avoid interactive prompts during apt-get
 ENV DEBIAN_FRONTEND=noninteractive
