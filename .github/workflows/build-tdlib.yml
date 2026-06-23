@@ -269,9 +269,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download platform artifacts
         uses: actions/download-artifact@v4
         with:
+          # Only the per-platform tarballs — NOT the `*.dockerbuild` build-record
+          # artifact buildx auto-uploads (it fails download-artifact and breaks the
+          # release; it is not a release asset anyway).
+          pattern: 'tdlib-type3-*'
           path: release-artifacts
 
       - name: List artifacts
