@@ -203,7 +203,10 @@ jobs:
           if [ "${{ matrix.os }}" = "linux" ]; then
             cp -P install/lib/libtdjson.so* "$DIST/lib/" 2>/dev/null || true
           else
-            cp -P install/lib/libtdjson.dylib* "$DIST/lib/" 2>/dev/null || true
+            # macOS versions the dylib as libtdjson.<ver>.dylib (version BEFORE
+            # .dylib), so `libtdjson*.dylib` catches BOTH the symlink and the real
+            # file. `libtdjson.dylib*` matched only the symlink → dangling in tarball.
+            cp -P install/lib/libtdjson*.dylib "$DIST/lib/" 2>/dev/null || true
           fi
           cp install/lib/*.a "$DIST/lib/" 2>/dev/null || true
 
@@ -322,9 +325,9 @@ jobs:
             docker pull ghcr.io/ankuper/tdlib-type3:${{ steps.tag.outputs.tag }}
             ```
 
-            ### Transport Modes
-            - `wss://` endpoint → WebSocket (WS upgrade)
-            - `https://` endpoint → HTTP stream (POST+chunked, ТСПУ-safe)
+            ### Transport
+            - `https://` endpoint → Type3 HTTP stream (POST + chunked framing inside TLS) — TSPU/DPI-safe.
+            - HTTP stream is the only supported transport. WebSocket (`wss://`) is removed: a WS upgrade on the wire is itself a DPI fingerprint.
           files: |
             release-artifacts/tdlib-type3-linux-amd64/tdlib-type3-linux-amd64.tar.gz
             release-artifacts/tdlib-type3-linux-arm64/tdlib-type3-linux-arm64.tar.gz
