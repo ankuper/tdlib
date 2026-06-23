@@ -62,7 +62,7 @@ RUN if [ "${TELEPROTO3_VERSION}" = "latest" ]; then \
     && mkdir -p /tmp/t3 \
     && tar -xzf /tmp/libteleproto3.tar.gz -C /tmp/t3 \
     && cp /tmp/t3/lib/libteleproto3.a /usr/local/lib/libteleproto3.a \
-    && cp /tmp/t3/lib/include/t3.h /usr/local/include/t3.h \
+    && cp -r /tmp/t3/lib/include/. /usr/local/include/ \
     && rm -rf /tmp/t3 /tmp/libteleproto3.tar.gz
 # === TYPE3-PROXY END ===
 
