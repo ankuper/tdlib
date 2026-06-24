@@ -1,3 +1,13 @@
+<!-- T3ChatM / ankuper fork -->
+
+> **Форк TDLib с поддержкой Type3 (mtProxy3).** Эта сборка умеет анти-DPI транспорт Type3 — туннель MTProto через обычный HTTPS, обход DPI/ТСПУ — через `RawConnectionType3`, потребляя [libteleproto3](https://github.com/ankuper/teleproto3). Ниже — оригинальная документация TDLib.
+>
+> **Fork of TDLib with Type3 (mtProxy3) support** — Type3 anti-DPI transport via `RawConnectionType3`, consuming [libteleproto3](https://github.com/ankuper/teleproto3). Original TDLib docs below.
+>
+> **Поддержать инфраструктуру · Support (TON):** `UQAYS0k0PEky8BUE1Rij90v8-CmOWsuhAzdLTHOzYC-qZ0pV`
+
+---
+
 # TDLib
 
 TDLib (Telegram Database library) is a cross-platform library for building [Telegram](https://telegram.org) clients. It can be easily used from almost any programming language.
