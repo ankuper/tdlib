@@ -39,7 +39,7 @@ env:
   # teleproto3 GitHub Release — never build it from source. Pinned to a
   # release/tag (policy: never float to `latest`). Bump to roll the whole CI
   # (native matrix + Docker image) to a new teleproto3 version.
-  TELEPROTO3_VERSION: lib-v0.8.2
+  TELEPROTO3_VERSION: lib-v0.8.3
 
 jobs:
   # ── Identity Audit ─────────────────────────────────────────────────────────
