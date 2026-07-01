@@ -257,7 +257,8 @@ class RawConnectionType3 final : public RawConnection {
       PacketInfo packet_info;
       packet_info.version = 2;
 
-      TRY_RESULT(read_result, Transport::read(packet.as_mutable_slice(), auth_key, &packet_info));
+      int32 error_code = 0;
+      TRY_RESULT(read_result, Transport::read(packet.as_mutable_slice(), error_code, auth_key, &packet_info));
       switch (read_result.type()) {
         case Transport::ReadResult::Quickack:
           TRY_STATUS(on_quick_ack(read_result.quick_ack(), callback));
